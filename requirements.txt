@@ -1,0 +1,9 @@
+streamlit
+psycopg2-binary
+pandas
+anthropic
+requests
+matplotlib
+python-docx
+reportlab
+openpyxl
