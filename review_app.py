@@ -69,6 +69,11 @@ BRANDS = [
     "SANDQVIST", "MARTIN MAGNUSSON", "STREET ONE & CECIL", "FRED PERRY",
     "HELLY HANSEN", "JACK WOLFSKIN", "LACOSTE",
 ]
+# Đánh giá ban đầu của CS ngay lúc nhập complaint — phân biệt complaint THẬT (lỗi từ Nilorn) với
+# complaint do chính khách hàng gây ra nhưng vẫn phát sinh khiếu nại. Chốt ngay lúc nhập liệu (CS
+# thường đã biết qua trao đổi với khách hàng), có thể sửa lại sau nếu điều tra ra khác. Mặc định
+# luôn là "Lỗi thật" vì đa số complaint là thật, CS chỉ cần đổi khi biết chắc là lỗi khách hàng.
+COMPLAINT_VALIDITY_OPTIONS = ["Lỗi thật (Nilorn)", "Lỗi từ phía khách hàng"]
 
 # SUPPLIER_PORTAL_BASE_URL — đã deploy thật lên Streamlit Community Cloud (public URL cố định).
 SUPPLIER_PORTAL_BASE_URL = "https://nilorn-supplier-app-zccldhcz5ghgnrk5mfkisg.streamlit.app"
@@ -416,6 +421,7 @@ def export_complaint_report_pdf(report: dict) -> bytes:
     story.append(Spacer(1, 8))
     story.append(Paragraph("Issue Details", styles["Heading2"]))
     field("Description", report.get("Mô tả sự cố"))
+    field("Assessment", report.get("Đánh giá"))
     field("Defect", report.get("Defect"))
     field("Root Cause", "; ".join(report.get("Root cause") or []) or None)
     field("CAPA", "; ".join(report.get("CAPA") or []) or None)
@@ -729,6 +735,15 @@ Bảng complaint(complaint_id PK uuid, complaint_no (CỘT NÀY LUÔN TRỐNG/NU
   brand (text, 1 trong 13 giá trị cố định: GYMSHARK, HESTRA, VAUDE, PASSENGER, NINEPINE, NOSO, SANDQVIST,
   MARTIN MAGNUSSON, STREET ONE & CECIL, FRED PERRY, HELLY HANSEN, JACK WOLFSKIN, LACOSTE),
   customer_id FK->customer, recorded_by FK->cs_staff,
+  complaint_validity (text, 1 trong đúng 2 giá trị: 'Lỗi thật (Nilorn)' hoặc 'Lỗi từ phía khách hàng' —
+  do CS tự đánh giá ngay lúc nhập complaint, phân biệt complaint THẬT SỰ do lỗi sản xuất/chất lượng của
+  Nilorn, với complaint phát sinh do CHÍNH KHÁCH HÀNG gây ra (ví dụ khách bảo quản sai, dùng sai cách...)
+  nhưng vẫn khiếu nại. CHỈ có ý nghĩa cho complaint có customer_id — không áp dụng cho complaint từ luồng
+  NCC tự khai báo (đó là lỗi từ nhà cung cấp, không liên quan khái niệm này). Khi câu hỏi nhắc tới "tỷ lệ
+  complaint thật/giả", "complaint do lỗi khách hàng", hay "khách hàng nào hay report sai" — LUÔN GROUP BY
+  theo khách hàng (join bảng customer qua customer_id), đếm riêng theo complaint_validity, rồi tính tỷ lệ
+  bằng cách ép kiểu số thực (count(...)::numeric / NULLIF(tổng, 0) * 100) để tránh chia số nguyên bị làm
+  tròn sai và tránh lỗi chia cho 0.,
   dyne_level, humidity_pct, temperature_c, moisture_pct, delta_e, notes)
 
 QUAN TRỌNG — giới hạn dữ liệu của machine_id, material_id, brand: 3 cột này CHỈ có giá trị cho
@@ -856,7 +871,7 @@ def fetch_complaint_full_report(conn, complaint_id):
                    d.defect_code, d.defect_name,
                    st.name, st.role, c.status, c.defect_photo,
                    c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
-                   c.root_cause_code
+                   c.root_cause_code, c.complaint_validity
             from complaint c
             left join product p on c.product_id = p.product_id
             left join supplier s on c.supplier_id = s.supplier_id
@@ -897,7 +912,7 @@ def fetch_complaint_full_report(conn, complaint_id):
      so_po, lot_number, qty_inspected, qty_affected, defect_code, defect_name,
      staff_name, staff_role, status, defect_photo,
      client_code, bear_the_claim, replacement_cost, replacement_cost_currency,
-     direct_root_cause_code) = row
+     direct_root_cause_code, complaint_validity) = row
 
     root_cause_list = [
         f"{code} — {name}" for code, name in rc_rows
@@ -920,6 +935,7 @@ def fetch_complaint_full_report(conn, complaint_id):
         "Mã complaint hệ thống": str(complaint_id),
         "Ngày phát sinh": date_opened.strftime("%d/%m/%Y") if date_opened else "",
         "Mô tả sự cố": notes or "",
+        "Đánh giá": complaint_validity or COMPLAINT_VALIDITY_OPTIONS[0],
         "Sản phẩm": product_name or "",
         "Nhà cung cấp": supplier_name or "",
         "Vendor No.": vendor_code or "",
@@ -1449,23 +1465,28 @@ def refine_complaint_prefill(client, question, today_str, product_names, custome
 
 
 def extract_complaint_from_email(client, today_str, product_names, customer_names, supplier_names,
-                                  staff_labels, rc_list, capa_list, email_text=None,
-                                  image_b64=None, image_media_type=None):
+                                  staff_labels, rc_list, capa_list, email_text=None, images=None):
+    """images: list các dict {"b64": ..., "media_type": ...} — cho phép gửi NHIỀU ảnh cùng lúc
+    (ví dụ vừa ảnh chụp email vừa ảnh chụp lỗi thực tế) để AI đọc tổng hợp, điền chính xác hơn."""
     instructions = _build_extraction_instructions(
         today_str, product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
     )
     content = []
-    if image_b64:
-        content.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": image_media_type, "data": image_b64},
-        })
+    if images:
+        for img in images:
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": img["media_type"], "data": img["b64"]},
+            })
+        n = len(images)
+        plural_note = f"({n} ảnh — có thể là email, ảnh chụp lỗi thực tế, hoặc nhiều trang cùng 1 email) " if n > 1 else ""
         content.append({
             "type": "text",
-            "text": f"Đọc nội dung email trong ảnh trên (kể cả chữ trong ảnh đính kèm nếu có) và trích xuất "
-                    f"thông tin theo đúng hướng dẫn sau:\n\n{instructions}",
+            "text": f"Đọc nội dung trong (các) ảnh trên {plural_note}(kể cả chữ trong ảnh đính kèm nếu có) và "
+                    f"trích xuất thông tin theo đúng hướng dẫn sau — nếu có nhiều ảnh, tổng hợp thông tin từ "
+                    f"TẤT CẢ ảnh vào cùng 1 kết quả duy nhất, không bỏ sót ảnh nào:\n\n{instructions}",
         })
-        fallback_desc = "(mô tả từ ảnh email — xem lại nội dung gốc)"
+        fallback_desc = "(mô tả từ ảnh — xem lại nội dung gốc)"
     else:
         content.append({
             "type": "text",
@@ -2434,16 +2455,16 @@ def suggest_root_cause_for_complaint(conn, ai_client, complaint_id, description_
 
 
 def update_legacy_complaint_cs_fields(conn, complaint_id, customer_name, client_code, bear_the_claim,
-                                       replacement_cost, replacement_cost_currency):
+                                       replacement_cost, replacement_cost_currency, complaint_validity=None):
     customer_id = get_or_create_customer(conn, customer_name) if customer_name else None
     with conn.cursor() as cur:
         cur.execute(
             """update complaint
                set customer_id = %s, client_code = %s, bear_the_claim = %s,
-                   replacement_cost = %s, replacement_cost_currency = %s
+                   replacement_cost = %s, replacement_cost_currency = %s, complaint_validity = %s
                where complaint_id = %s;""",
             (customer_id, client_code or None, bear_the_claim, replacement_cost,
-             replacement_cost_currency, complaint_id),
+             replacement_cost_currency, complaint_validity, complaint_id),
         )
     conn.commit()
     compute_and_update_complaint_status(conn, complaint_id)
@@ -2464,6 +2485,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             select c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                    c.quantity_inspected, c.quantity_affected, c.notes, c.status,
                    c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
+                   c.complaint_validity,
                    (select string_agg(distinct x.rc_text, '; ') from (
                         select rc.root_cause as rc_text
                         from complaint_root_cause crc join root_cause_taxonomy rc on crc.root_cause_code = rc.root_cause_code
@@ -2481,7 +2503,8 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             where c.complaint_id = %s
             group by c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                      c.quantity_inspected, c.quantity_affected, c.notes, c.status,
-                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency;
+                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
+                     c.complaint_validity;
         """, (complaint_id,))
         row = cur.fetchone()
     if not row:
@@ -2489,7 +2512,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
         return
     (date_opened, supplier_name, vendor_code_db, customer_name, product_name, so_po, lot_number,
      qty_inspected, qty_affected, notes, status, client_code_db, bear_the_claim_db,
-     replacement_cost_db, replacement_cost_currency_db, root_causes, capas) = row
+     replacement_cost_db, replacement_cost_currency_db, complaint_validity_db, root_causes, capas) = row
 
     vendor_code = vendor_code_db or _fuzzy_match_lookup_code(conn, "vendor_lookup", "vendor_code", "vendor_name", supplier_name)
     client_code_suggested = client_code_db or _fuzzy_match_lookup_code(
@@ -2511,6 +2534,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
     with col2:
         st.markdown("#### Chi tiết lỗi")
         st.write(f"**Mô tả:** {notes or '(trống)'}")
+        st.write(f"**Đánh giá:** {complaint_validity_db or COMPLAINT_VALIDITY_OPTIONS[0]}")
         st.write(f"**Root Cause:** {root_causes or '(chưa duyệt/chưa có)'}")
         st.write(f"**CAPA:** {capas or '(chưa duyệt/chưa có)'}")
 
@@ -2545,11 +2569,18 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                     help="Tick vào đây để xác nhận rõ ràng là 0, tránh bị nhầm với 'chưa điền' — "
                          "nếu để trống/0 mà KHÔNG tick, hệ thống vẫn coi là chưa xác định và giữ badge nhắc nhở.",
                 )
+            complaint_validity_in = st.radio(
+                "Đánh giá / Assessment", COMPLAINT_VALIDITY_OPTIONS,
+                index=COMPLAINT_VALIDITY_OPTIONS.index(complaint_validity_db) if complaint_validity_db in COMPLAINT_VALIDITY_OPTIONS else 0,
+                horizontal=True,
+                help="Cập nhật lại nếu sau khi điều tra phát hiện khác với đánh giá ban đầu lúc nhập. "
+                     "/ Update this if further investigation reveals a different conclusion than the initial entry.",
+            )
             if st.form_submit_button("💾 Lưu / Save"):
                 final_cost_in = 0.0 if no_cost_in else (replacement_cost_in or None)
                 update_legacy_complaint_cs_fields(
                     conn, complaint_id, customer_name_in, client_code_in,
-                    bear_the_claim_in, final_cost_in, currency_in,
+                    bear_the_claim_in, final_cost_in, currency_in, complaint_validity_in,
                 )
                 st.success("Đã lưu. / Saved.")
                 st.rerun()
@@ -3950,10 +3981,13 @@ if page == "new_complaint":
             height=150, key="email_paste_input",
         )
         email_image_input = st.file_uploader(
-            "...hoặc tải lên ảnh chụp màn hình email / ...or upload a screenshot of the email",
-            type=["png", "jpg", "jpeg"], key="email_image_input",
-            help="Nếu email có ảnh đính kèm cần đọc, hoặc không tiện copy chữ. "
-                 "/ Use this if the email has an attached image to read, or copying text isn't convenient.",
+            "...hoặc tải lên ảnh chụp màn hình email / hình ảnh lỗi thực tế (có thể chọn nhiều ảnh) / "
+            "...or upload email screenshot(s) / real defect photo(s) (multiple allowed)",
+            type=["png", "jpg", "jpeg"], key="email_image_input", accept_multiple_files=True,
+            help="Có thể chọn nhiều ảnh cùng lúc (ví dụ vừa ảnh chụp email vừa ảnh chụp lỗi thực tế) — "
+                 "AI sẽ đọc tổng hợp tất cả để điền chính xác hơn. Tối đa 5 ảnh/lần. "
+                 "/ You can select multiple images at once (e.g. an email screenshot plus real defect "
+                 "photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
         )
         render_paste_zone("tải lên ảnh chụp màn hình email")
         if st.button("🔎 Trích xuất từ email / Extract from email", key="btn_extract_email"):
@@ -3965,14 +3999,23 @@ if page == "new_complaint":
                     (product_names, customer_names, supplier_names,
                      staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
                     conn = ensure_connection()
-                    if email_image_input is not None:
-                        image_bytes = email_image_input.getvalue()
-                        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-                        image_media_type = email_image_input.type or "image/png"
+                    if email_image_input:
+                        images_for_ai = [
+                            {
+                                "b64": base64.b64encode(f.getvalue()).decode("utf-8"),
+                                "media_type": f.type or "image/png",
+                            }
+                            for f in email_image_input[:5]
+                        ]
+                        if len(email_image_input) > 5:
+                            st.warning(
+                                f"Bạn tải lên {len(email_image_input)} ảnh — chỉ 5 ảnh đầu tiên được gửi cho AI đọc. "
+                                f"/ You uploaded {len(email_image_input)} images — only the first 5 are sent to AI."
+                            )
                         fields = extract_complaint_from_email(
                             ai_client, datetime.now().strftime("%Y-%m-%d"),
                             product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
-                            image_b64=image_b64, image_media_type=image_media_type,
+                            images=images_for_ai,
                         )
                     else:
                         fields = extract_complaint_from_email(
@@ -4090,6 +4133,15 @@ if page == "new_complaint":
                 height=100, key="newcomplaint_desc_value",
                 help="Càng chi tiết càng tốt — hệ thống dùng phần này để tự phân loại và gán mã có sẵn. "
                      "/ The more detail the better — this is what the system uses to auto-classify and match a code.",
+            )
+            complaint_validity_new = st.radio(
+                "Đánh giá ban đầu / Initial assessment",
+                COMPLAINT_VALIDITY_OPTIONS,
+                horizontal=True, key="newcomplaint_validity_value",
+                help="Complaint này là lỗi thật từ Nilorn, hay do chính khách hàng gây ra nhưng vẫn phát sinh "
+                     "khiếu nại? Chốt theo hiểu biết ban đầu — có thể sửa lại sau ở trang chi tiết nếu điều tra "
+                     "ra khác. / Is this a genuine Nilorn defect, or an issue caused by the customer themselves "
+                     "that still resulted in a complaint? Can be corrected later on the detail page.",
             )
             defect_photo_input = st.file_uploader(
                 "Ảnh minh họa lỗi (tùy chọn) / Defect photo (optional)",
@@ -4328,13 +4380,14 @@ if page == "new_complaint":
                         """insert into complaint
                                (date_opened, source, product_id, supplier_id, machine_id,
                                 so_po, lot_number, quantity_inspected, quantity_affected, notes, status,
-                                brand, customer_id, recorded_by, defect_photo, bear_the_claim)
-                           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Thiếu Customer', %s, %s, %s, %s, %s)
+                                brand, customer_id, recorded_by, defect_photo, bear_the_claim, complaint_validity)
+                           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Thiếu Customer', %s, %s, %s, %s, %s, %s)
                            returning complaint_id;""",
                         (date_opened_new, "Nhập tay (form)", product_id_new, supplier_id_new, machine_id_new,
                          so_po_new or None, lot_new or None,
                          qty_inspected_new or None, qty_affected_new or None, desc,
-                         brand_new, customer_id_new, staff_id_new, defect_photo_b64, "100% Nilorn"),
+                         brand_new, customer_id_new, staff_id_new, defect_photo_b64, "100% Nilorn",
+                         complaint_validity_new),
                     )
                     new_complaint_id = cur.fetchone()[0]
                 conn.commit()
