@@ -2569,13 +2569,14 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                     help="Tick vào đây để xác nhận rõ ràng là 0, tránh bị nhầm với 'chưa điền' — "
                          "nếu để trống/0 mà KHÔNG tick, hệ thống vẫn coi là chưa xác định và giữ badge nhắc nhở.",
                 )
-            complaint_validity_in = st.radio(
-                "Đánh giá / Assessment", COMPLAINT_VALIDITY_OPTIONS,
-                index=COMPLAINT_VALIDITY_OPTIONS.index(complaint_validity_db) if complaint_validity_db in COMPLAINT_VALIDITY_OPTIONS else 0,
-                horizontal=True,
-                help="Cập nhật lại nếu sau khi điều tra phát hiện khác với đánh giá ban đầu lúc nhập. "
-                     "/ Update this if further investigation reveals a different conclusion than the initial entry.",
-            )
+            with validity_radio_box():
+                complaint_validity_in = st.radio(
+                    "Đánh giá / Assessment", COMPLAINT_VALIDITY_OPTIONS,
+                    index=COMPLAINT_VALIDITY_OPTIONS.index(complaint_validity_db) if complaint_validity_db in COMPLAINT_VALIDITY_OPTIONS else 0,
+                    horizontal=True,
+                    help="Cập nhật lại nếu sau khi điều tra phát hiện khác với đánh giá ban đầu lúc nhập. "
+                         "/ Update this if further investigation reveals a different conclusion than the initial entry.",
+                )
             if st.form_submit_button("💾 Lưu / Save"):
                 final_cost_in = 0.0 if no_cost_in else (replacement_cost_in or None)
                 update_legacy_complaint_cs_fields(
@@ -2872,9 +2873,63 @@ div[class*="st-key-zone_gray_"] {
     background: #e9e7de; border-left: 4px solid #5f5e5a;
     border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
+/* Ô chọn "Đánh giá ban đầu" (Lỗi thật / Lỗi khách hàng) — hiện thành 2 thẻ lớn rõ ràng thay vì
+   nút radio nhỏ, xanh cho Nilorn, đỏ cho khách hàng, dùng chung 1 style cho mọi nơi xuất hiện ô này
+   (form Complaint mới, mục Bổ sung thông tin ở trang chi tiết) nhờ đặt tên key cùng tiền tố. */
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] > div[role="radiogroup"] {
+    display: flex; gap: 12px; margin-top: 2px;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label {
+    flex: 1; border: 2px solid #e5e3da; border-radius: 10px; padding: 14px 18px !important;
+    margin: 0 !important; cursor: pointer; transition: all 0.15s ease; background: #ffffff;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label > div:first-child {
+    display: none;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label div[data-testid="stMarkdownContainer"] {
+    text-align: center; width: 100%;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label div[data-testid="stMarkdownContainer"] p {
+    font-size: 15px; font-weight: 600; margin: 0; color: #4a4a45;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1) {
+    border-color: #bcdcc0;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):hover {
+    background: #f3f9ee;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
+    background: #eaf3de; border-color: #3b6d11; box-shadow: 0 0 0 1px #3b6d11;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) p {
+    color: #27500a;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2) {
+    border-color: #f0b8b8;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):hover {
+    background: #fdf3f3;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
+    background: #fcebeb; border-color: #a32d2d; box-shadow: 0 0 0 1px #a32d2d;
+}
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) p {
+    color: #791f1f;
+}
 </style>""",
     unsafe_allow_html=True,
 )
+
+_validity_radio_counter = [0]
+
+
+def validity_radio_box():
+    """Context manager riêng cho ô 'Đánh giá ban đầu' — bọc trong 1 container có key mang tiền tố
+    'validity_radio_' để CSS ở trên tự nhận diện và tô màu, dùng được ở bất kỳ đâu trong app mà
+    không cần khai báo CSS riêng từng chỗ (giống nguyên lý zone_card())."""
+    n = _validity_radio_counter[0]
+    _validity_radio_counter[0] += 1
+    return st.container(key=f"validity_radio_{n}")
 
 KIND_BADGE_STYLE = {
     "Defect": ("#e6f1fb", "#0c447c", "#185fa5"),
@@ -4134,15 +4189,16 @@ if page == "new_complaint":
                 help="Càng chi tiết càng tốt — hệ thống dùng phần này để tự phân loại và gán mã có sẵn. "
                      "/ The more detail the better — this is what the system uses to auto-classify and match a code.",
             )
-            complaint_validity_new = st.radio(
-                "Đánh giá ban đầu / Initial assessment",
-                COMPLAINT_VALIDITY_OPTIONS,
-                horizontal=True, key="newcomplaint_validity_value",
-                help="Complaint này là lỗi thật từ Nilorn, hay do chính khách hàng gây ra nhưng vẫn phát sinh "
-                     "khiếu nại? Chốt theo hiểu biết ban đầu — có thể sửa lại sau ở trang chi tiết nếu điều tra "
-                     "ra khác. / Is this a genuine Nilorn defect, or an issue caused by the customer themselves "
-                     "that still resulted in a complaint? Can be corrected later on the detail page.",
-            )
+            with validity_radio_box():
+                complaint_validity_new = st.radio(
+                    "Đánh giá ban đầu / Initial assessment",
+                    COMPLAINT_VALIDITY_OPTIONS,
+                    horizontal=True, key="newcomplaint_validity_value",
+                    help="Complaint này là lỗi thật từ Nilorn, hay do chính khách hàng gây ra nhưng vẫn phát sinh "
+                         "khiếu nại? Chốt theo hiểu biết ban đầu — có thể sửa lại sau ở trang chi tiết nếu điều tra "
+                         "ra khác. / Is this a genuine Nilorn defect, or an issue caused by the customer themselves "
+                         "that still resulted in a complaint? Can be corrected later on the detail page.",
+                )
             defect_photo_input = st.file_uploader(
                 "Ảnh minh họa lỗi (tùy chọn) / Defect photo (optional)",
                 type=["png", "jpg", "jpeg"], key="newcomplaint_defect_photo",
