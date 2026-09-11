@@ -94,7 +94,7 @@ CS_GENERAL_EMAIL = "CS.NVN@vn.nilorn.com"
 
 # Link tới chính app này — chèn vào email báo approver để bấm mở app ngay. Đọc từ Secrets để dễ
 # đổi khi URL đổi (ví dụ sau khi deploy lên Streamlit Cloud), không cần sửa code.
-REVIEW_APP_URL = st.secrets.get("REVIEW_APP_URL", "http://172.16.60.240:8501")
+REVIEW_APP_URL = st.secrets.get("REVIEW_APP_URL", "https://nilorn-review-app.streamlit.app")
 
 # Supabase Storage — dùng chung bucket "defect-media" với supplier_portal.py, để CS có thể thay
 # ảnh/video sau khi nhà cung cấp đã nộp.
