@@ -2823,7 +2823,9 @@ def render_submission_detail_page(conn, submission_id):
         st.write(f"**Product Group:** {sub.get('product_group') or '-'}")
         st.write(f"**Recorded by:** {sub.get('recorded_by_name') or '(not assigned)'}")
         st.write(f"**Assessment:** {sub.get('complaint_validity') or COMPLAINT_VALIDITY_OPTIONS[0]}")
-        st.write(f"**Prepared by:** {sub.get('prepared_by') or '-'} ({sub.get('prepared_by_position') or '-'})")
+        _prep_by = sub.get('prepared_by')
+        _prep_pos = sub.get('prepared_by_position')
+        st.write(f"**Prepared by:** {f'{_prep_by} ({_prep_pos})' if _prep_by else '(not provided)'}")
         if sub.get("signature_image_url"):
             st.image(sub["signature_image_url"], width=150, caption="Signature")
         st.write(f"**Order Qty:** {sub['order_qty']} | **Defect Qty:** {sub['defect_qty']}")
@@ -3318,13 +3320,13 @@ def render_paste_zone(target_label_substring, height=100):
             text-align: center; cursor: text; color: #9c9a92;
             font-family: -apple-system, sans-serif; font-size: 13px; outline: none;
             transition: border-color 0.15s ease, color 0.15s ease;
-        ">(bấm vào đây / click here)</div>
+        ">(click here)</div>
         <div id="fc-paste-status" style="margin-top:4px;font-size:12px;font-family:-apple-system,sans-serif;"></div>
         <script>
         const targetLabel = {label_js};
         const zone = document.getElementById('fc-paste-zone');
         const status = document.getElementById('fc-paste-status');
-        const placeholder = '(bấm vào đây / click here)';
+        const placeholder = '(click here)';
 
         function findTargetInput() {{
             const parentDoc = window.parent.document;
@@ -3534,7 +3536,7 @@ if page == "taxonomy":
             picked_defect_code = picked_defect_label.split(" — ")[0]
             existing_ref_imgs = fetch_defect_reference_images(conn, picked_defect_code)
             if existing_ref_imgs:
-                st.caption(f"Currently have {len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES}{len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES} images")
+                st.caption(f"Currently have {len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES} images")
                 img_cols = st.columns(len(existing_ref_imgs))
                 for i, (col, img_b64) in enumerate(zip(img_cols, existing_ref_imgs)):
                     with col:
@@ -3545,7 +3547,7 @@ if page == "taxonomy":
             slots_left = MAX_DEFECT_REFERENCE_IMAGES - len(existing_ref_imgs)
             if slots_left > 0:
                 new_ref_img_files = st.file_uploader(
-                    f"Add reference images (remaining {slots_left}Add reference images ({slots_left} slot(s) left)",
+                    f"Add reference images ({slots_left} slot(s) left)",
                     type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"new_ref_img_{picked_defect_code}",
                 )
                 if new_ref_img_files and st.button("Save images", key=f"btn_save_ref_img_{picked_defect_code}"):
@@ -3560,7 +3562,7 @@ if page == "taxonomy":
                         st.success(f"Reference images saved for {picked_defect_code}.")
                     st.rerun()
             else:
-                st.caption(f"Already have {MAX_DEFECT_REFERENCE_IMAGES}Already at the {MAX_DEFECT_REFERENCE_IMAGES}-image limit — delete one to add a new one.")
+                st.caption(f"Already at the {MAX_DEFECT_REFERENCE_IMAGES}-image limit — delete one to add a new one.")
 
     @st.fragment
     def render_pending_queue():
@@ -3701,13 +3703,13 @@ if page == "data_lookup":
             st.caption(
                 "Due to a previous technical issue (now fixed), some supplier reports submitted via the shared link failed to create a matching complaint. Click the button below to automatically restore them (including Defect/Root Cause/CAPA suggestions for the reviewer)."
             )
-            if st.button(f"🛠️ Repair {len(orphaned)}Repair {len(orphaned)} missing complaints"):
+            if st.button(f"🛠️ Repair {len(orphaned)} missing complaints"):
                 ai_client_repair = get_ai_client()
                 progress = st.progress(0.0)
                 for i, row in enumerate(orphaned):
                     repair_orphaned_submission(conn, ai_client_repair, *row)
                     progress.progress((i + 1) / len(orphaned))
-                st.success(f"Repaired {len(orphaned)} complaint. / Repaired {len(orphaned)} complaints.")
+                st.success(f"Repaired {len(orphaned)} complaint(s).")
                 st.rerun()
 
     with conn.cursor() as cur:
@@ -3907,9 +3909,10 @@ if page == "data_lookup":
             else:
                 for capa_action_id, capa_code, capa_action_name, date_proposed, date_implemented, verif, resp in capa_rows_status:
                     with st.container(border=True):
-                        st.write(f"**{capa_code} — {capa_action_name}responsible: {resp or 'unknown)'})")
+                        st.write(f"**{capa_code} — {capa_action_name}** (responsible: {resp or 'unknown'})")
                         st.caption(
-                            f"Proposed on: {date_proposed.strftime('%d/%m/%Y') if date_proposed else '?'}Effectiveness verification: {verif or 'Pending'}"
+                            f"Proposed on: {date_proposed.strftime('%d/%m/%Y') if date_proposed else '(not set)'} | "
+                            f"Effectiveness verification: {verif or 'Pending'}"
                         )
                         if date_implemented:
                             st.success(f"Implemented on {date_implemented.strftime('%d/%m/%Y')}")
@@ -4452,7 +4455,7 @@ if page == "new_complaint":
 
         st.markdown("---")
         with zone_card("amber"):
-            section_header("🔎", "optional)", "amber")
+            section_header("🔎", "Root Cause & CAPA (optional)", "amber")
             st.caption(
                 "Fill in if known, skip otherwise (AI will auto-classify the root cause by default)."
             )
