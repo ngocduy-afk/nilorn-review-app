@@ -45,8 +45,7 @@ ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
 
 if not DB_PASSWORD:
     st.error(
-        "⚠️ Thiếu cấu hình Secrets (DB_PASSWORD) — vào App settings → Secrets để điền. "
-        "/ Missing Secrets configuration (DB_PASSWORD) — go to App settings → Secrets."
+        "Missing Secrets configuration (DB_PASSWORD) — go to App settings → Secrets."
     )
     st.stop()
 
@@ -73,7 +72,7 @@ BRANDS = [
 # complaint do chính khách hàng gây ra nhưng vẫn phát sinh khiếu nại. Chốt ngay lúc nhập liệu (CS
 # thường đã biết qua trao đổi với khách hàng), có thể sửa lại sau nếu điều tra ra khác. Mặc định
 # luôn là "Lỗi thật" vì đa số complaint là thật, CS chỉ cần đổi khi biết chắc là lỗi khách hàng.
-COMPLAINT_VALIDITY_OPTIONS = ["Lỗi thật (Nilorn)", "Lỗi từ phía khách hàng"]
+COMPLAINT_VALIDITY_OPTIONS = ["Genuine Defect (Nilorn)", "Customer-Caused Issue"]
 
 # SUPPLIER_PORTAL_BASE_URL — đã deploy thật lên Streamlit Community Cloud (public URL cố định).
 SUPPLIER_PORTAL_BASE_URL = "https://nilorn-supplier-app-zccldhcz5ghgnrk5mfkisg.streamlit.app"
@@ -87,6 +86,11 @@ SUPPLIER_PORTAL_BASE_URL = "https://nilorn-supplier-app-zccldhcz5ghgnrk5mfkisg.s
 GMAIL_NOTIFY_ADDRESS = st.secrets.get("GMAIL_NOTIFY_ADDRESS", "")
 GMAIL_NOTIFY_APP_PASSWORD = st.secrets.get("GMAIL_NOTIFY_APP_PASSWORD", "")
 APPROVER_EMAILS = [e.strip() for e in st.secrets.get("APPROVER_EMAILS", "").split(",") if e.strip()]
+
+# Hộp thư CS chung — LUÔN nhận thông báo mỗi khi có complaint mới (nhập tay hoặc NCC tự khai báo),
+# không phân biệt "Ghi nhận bởi" là ai. Cố định (không qua Secrets) vì đây là địa chỉ dùng chung
+# cố định của phòng CS, không đổi theo từng lần deploy.
+CS_GENERAL_EMAIL = "CS.NVN@vn.nilorn.com"
 
 # Link tới chính app này — chèn vào email báo approver để bấm mở app ngay. Đọc từ Secrets để dễ
 # đổi khi URL đổi (ví dụ sau khi deploy lên Streamlit Cloud), không cần sửa code.
@@ -104,7 +108,7 @@ def upload_to_storage(file_bytes, filename, content_type):
     """Upload 1 file lên Supabase Storage bucket, trả về URL công khai — giống hệt hàm cùng tên
     trong supplier_portal.py, dùng ở đây để CS thay ảnh/video sau khi nhà cung cấp đã nộp."""
     if not SUPABASE_SERVICE_KEY:
-        raise Exception("Chưa điền SUPABASE_SERVICE_KEY trong review_app.py.")
+        raise Exception("SUPABASE_SERVICE_KEY not set in review_app.py.")
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
     path = f"{datetime.now().strftime('%Y%m%d')}/{uuid.uuid4().hex}_{safe_name}"
     url = f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{path}"
@@ -115,7 +119,7 @@ def upload_to_storage(file_bytes, filename, content_type):
     }
     resp = requests.post(url, headers=headers, data=file_bytes, timeout=60)
     if resp.status_code not in (200, 201):
-        raise Exception(f"Upload thất bại ({resp.status_code}): {resp.text[:200]}")
+        raise Exception(f"Upload failed ({resp.status_code}): {resp.text[:200]}")
     return f"{SUPABASE_URL}/storage/v1/object/public/{STORAGE_BUCKET}/{path}"
 
 
@@ -130,7 +134,7 @@ def send_notification_email(to_addrs, subject, body):
         to_addrs = [to_addrs]
     to_addrs = [a for a in to_addrs if a]
     if not to_addrs:
-        return False, "Không có địa chỉ email nhận / No recipient email address"
+        return False, "No recipient email address"
     try:
         msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = subject
@@ -160,6 +164,66 @@ def _log_notify_attempt(conn, ref_id, emails, mail_ok, mail_err):
         pass
 
 
+def notify_recorded_by_assignment(conn, complaint_id, staff_id, so_po):
+    """Gửi email báo khi 1 complaint được gán/đổi người ghi nhận (CS phụ trách) — gửi tới CẢ hộp
+    thư CS chung (CS_GENERAL_EMAIL) LẪN email riêng của người vừa được gán, để cả 2 đều biết,
+    không phân biệt complaint đến từ luồng nào (nhập tay hay NCC tự khai báo). Dùng khi CS
+    SỬA/GÁN LẠI người phụ trách sau này qua trang chi tiết — KHÔNG dùng cho lúc tạo complaint mới
+    (lúc đó dùng notify_new_complaint_recorded, vì luôn phải báo CS chung dù có chọn người hay không)."""
+    if not staff_id:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select name, email from cs_staff where staff_id = %s;", (staff_id,))
+            staff_row = cur.fetchone()
+    except Exception:
+        return
+    if not staff_row:
+        return
+    staff_name, staff_email = staff_row
+    recipients = [CS_GENERAL_EMAIL]
+    if staff_email:
+        recipients.append(staff_email)
+    body = (
+        f"Complaint (SO/PO: {so_po or '(none)'}) was just recorded by {staff_name}, now in charge.\n\n"
+        f"Open the app, 'Data Lookup' tab to view details: {REVIEW_APP_URL}"
+    )
+    mail_ok, mail_err = send_notification_email(
+        recipients, f"[Nilorn Internal AI] Complaint {so_po or ''} — Recorded by {staff_name}", body,
+    )
+    _log_notify_attempt(conn, complaint_id, recipients, mail_ok, mail_err)
+
+
+def notify_new_complaint_recorded(conn, complaint_id, staff_id, so_po, source_label="New Complaint (Manual Entry)"):
+    """Gửi email báo có 1 complaint MỚI vừa được tạo — LUÔN gửi tới hộp thư CS chung
+    (CS_GENERAL_EMAIL) bất kể có chọn 'Ghi nhận bởi' hay không, và gửi thêm tới đúng người đó
+    (email riêng) nếu đã chọn. Dùng đúng lúc TẠO complaint mới (cả nhập tay lẫn NCC tự khai báo)."""
+    recipients = [CS_GENERAL_EMAIL]
+    staff_name = None
+    if staff_id:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("select name, email from cs_staff where staff_id = %s;", (staff_id,))
+                staff_row = cur.fetchone()
+            if staff_row:
+                staff_name, staff_email = staff_row
+                if staff_email and staff_email not in recipients:
+                    recipients.append(staff_email)
+        except Exception:
+            pass
+    body = (
+        f"A new complaint has just been recorded ({source_label}).\n\n"
+        f"SO/PO: {so_po or '(none)'}\n"
+        f"Recorded by: {staff_name or '(not assigned)'}\n\n"
+        f"Open the app, 'Data Lookup' tab to view details: {REVIEW_APP_URL}"
+    )
+    mail_ok, mail_err = send_notification_email(
+        recipients, f"[Nilorn Internal AI] New Complaint — {so_po or '(no SO/PO)'}", body,
+    )
+    _log_notify_attempt(conn, complaint_id, recipients, mail_ok, mail_err)
+
+
+
 def check_and_notify_new_suggestions(conn):
     """Kiểm tra có đề xuất Pending nào MỚI kể từ lần thông báo gần nhất không — nếu có, gửi 1 email
     tổng hợp cho approver rồi cập nhật mốc thời gian last_notified_at. Cơ chế mốc thời gian tự chống
@@ -181,15 +245,15 @@ def check_and_notify_new_suggestions(conn):
         if not new_items:
             return
         lines = [f"- [{kind}] {name}" for kind, name in new_items]
-        app_link_line = f"\n\nMở app: {REVIEW_APP_URL}" if REVIEW_APP_URL else ""
+        app_link_line = f"\n\nOpen the app: {REVIEW_APP_URL}" if REVIEW_APP_URL else ""
         body = (
-            f"Có {len(new_items)} đề xuất mới đang chờ duyệt trong Nilorn Internal AI:\n\n"
+            f"There are {len(new_items)} new suggestion(s) pending approval in Nilorn Internal AI:\n\n"
             + "\n".join(lines)
             + app_link_line
-            + "\n\nVào app, tab 'Duyệt Taxonomy' để xem và xử lý."
+            + "\n\nOpen the app, 'Review Taxonomy' tab to view and process."
         )
         send_notification_email(
-            APPROVER_EMAILS, f"[Nilorn Internal AI] {len(new_items)} đề xuất mới cần duyệt", body,
+            APPROVER_EMAILS, f"[Nilorn Internal AI] {len(new_items)} new suggestion(s) need approval", body,
         )
         with conn.cursor() as cur:
             cur.execute("update app_notification_state set last_notified_at = now() where id = true;")
@@ -220,7 +284,7 @@ def fetch_cs_staff_email(conn, staff_display_name):
 # ============================================================
 # XUẤT FILE — Excel / Word / PDF
 # ============================================================
-REPORT_TITLE = "Báo cáo sự cố và Hướng khắc phục"
+REPORT_TITLE = "Issue Report and Corrective Action"
 
 
 def export_word_report(report: dict, supplier_signature_name=None, supplier_signature_image_b64=None) -> bytes:
@@ -243,7 +307,7 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
     title = doc.add_heading(REPORT_TITLE, level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
-    subtitle = doc.add_paragraph(f"Ngày xuất: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    subtitle = doc.add_paragraph(f"Exported on: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     if subtitle.runs:
         subtitle.runs[0].italic = True
@@ -276,18 +340,18 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
         for item in items:
             doc.add_paragraph(str(item), style="List Bullet")
 
-    rendered_keys = {"Mô tả sự cố"}
+    rendered_keys = {"Issue Description"}
 
     # I. Thông tin chung
-    add_section("I. Thông tin chung")
+    add_section("I. General Information")
     info_table = doc.add_table(rows=0, cols=2)
     info_table.style = "Light List Accent 1"
     for label, key in [
-        ("Mã complaint hệ thống", "Mã complaint hệ thống"),
-        ("Ngày phát sinh", "Ngày phát sinh"),
-        ("Ghi nhận bởi", "Ghi nhận bởi"),
+        ("System Complaint ID", "System Complaint ID"),
+        ("Date Occurred", "Date Occurred"),
+        ("Recorded By", "Recorded By"),
         ("SO/PO", "SO/PO"),
-        ("Lô sản xuất", "Lô sản xuất"),
+        ("Purchase Order No.", "Purchase Order No."),
     ]:
         rendered_keys.add(key)
         row = info_table.add_row().cells
@@ -299,39 +363,39 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
     doc.add_paragraph()
 
     # II. Sản phẩm & Khách hàng
-    add_section("II. Sản phẩm & Khách hàng")
-    for label in ["Sản phẩm", "Nhà cung cấp", "Thương hiệu", "Khách hàng", "Máy liên quan",
-                  "Số lượng kiểm", "Số lượng lỗi"]:
+    add_section("II. Product & Customer")
+    for label in ["Product", "Supplier", "Brand", "Customer", "Related Machine",
+                  "Quantity Inspected", "Defect Quantity"]:
         add_field(label, label)
 
     # III. Mô tả sự cố
-    add_section("III. Mô tả sự cố")
-    doc.add_paragraph(str(report.get("Mô tả sự cố") or ""))
+    add_section("III. Issue Description")
+    doc.add_paragraph(str(report.get("Issue Description") or ""))
 
-    rendered_keys.add("Ảnh lỗi")
-    defect_photo_b64 = report.get("Ảnh lỗi")
+    rendered_keys.add("Defect Photo")
+    defect_photo_b64 = report.get("Defect Photo")
     if defect_photo_b64:
         try:
             photo_bytes = base64.b64decode(defect_photo_b64)
             photo_stream = io.BytesIO(photo_bytes)
             caption_p = doc.add_paragraph()
-            caption_p.add_run("Hình ảnh minh họa:").bold = True
+            caption_p.add_run("Illustration:").bold = True
             doc.add_picture(photo_stream, width=Inches(4))
         except Exception:
             # Ảnh lỗi/không đọc được — bỏ qua phần ảnh, không làm gián đoạn việc xuất báo cáo.
             pass
 
     # IV. Phân loại & Hướng khắc phục
-    add_section("IV. Phân loại & Hướng khắc phục")
+    add_section("IV. Classification & Corrective Action")
     add_field("Defect", "Defect")
     add_list_field("Root cause", "Root cause")
     add_list_field("CAPA", "CAPA")
 
     # V. Kết quả phân loại AI (chỉ hiện nếu có — báo cáo lúc nhập mới có, báo cáo tra cứu lại thì không)
-    if "Kết quả phân loại AI" in report:
-        rendered_keys.add("Kết quả phân loại AI")
-        add_section("V. Kết quả phân loại AI")
-        ai_text = str(report.get("Kết quả phân loại AI") or "")
+    if "AI Classification Result" in report:
+        rendered_keys.add("AI Classification Result")
+        add_section("V. AI Classification Result")
+        ai_text = str(report.get("AI Classification Result") or "")
         for line in ai_text.split(" | "):
             clean_line = line.replace("**", "")
             doc.add_paragraph(clean_line, style="List Bullet")
@@ -339,7 +403,7 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
     # VI. Thông tin khác — bất kỳ trường nào chưa hiển thị ở trên (ví dụ khi tra cứu bản mới nhất)
     remaining = {k: v for k, v in report.items() if k not in rendered_keys}
     if remaining:
-        add_section("VI. Thông tin khác")
+        add_section("VI. Other Information")
         for k, v in remaining.items():
             p = doc.add_paragraph()
             p.add_run(f"{k}: ").bold = True
@@ -352,10 +416,10 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
     sig_table.autofit = True
     c00 = sig_table.cell(0, 0).paragraphs[0]
     c00.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    c00.add_run("Người lập").bold = True
+    c00.add_run("Prepared By").bold = True
     c01 = sig_table.cell(0, 1).paragraphs[0]
     c01.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    c01.add_run("Người duyệt").bold = True
+    c01.add_run("Approved By").bold = True
 
     # Ô "Người lập" — nếu nhà cung cấp đã nộp báo cáo kèm ảnh chữ ký, tự động chèn ảnh đó vào đây
     # thay vì để trống chờ ký tay. Nếu không có ảnh (nhà cung cấp không tải ảnh, hoặc complaint
@@ -371,16 +435,16 @@ def export_word_report(report: dict, supplier_signature_name=None, supplier_sign
             run_img.add_picture(image_stream, width=Inches(1.5))
         except Exception:
             # Ảnh lỗi/không đọc được — vẫn tiếp tục xuất báo cáo, chỉ bỏ qua phần ảnh.
-            p_lap.add_run("\n\n\n(Ký, ghi rõ họ tên)").italic = True
+            p_lap.add_run("\n\n\n(Signature, full name)").italic = True
         if supplier_signature_name:
             name_p = cell_lap.add_paragraph(supplier_signature_name)
             name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     else:
-        p_lap.add_run("\n\n\n(Ký, ghi rõ họ tên)").italic = True
+        p_lap.add_run("\n\n\n(Signature, full name)").italic = True
 
     p_duyet = sig_table.cell(1, 1).paragraphs[0]
     p_duyet.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_duyet.add_run("\n\n\n(Ký, ghi rõ họ tên)").italic = True
+    p_duyet.add_run("\n\n\n(Signature, full name)").italic = True
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -406,30 +470,32 @@ def export_complaint_report_pdf(report: dict) -> bytes:
         story.append(Spacer(1, 4))
 
     story.append(Paragraph("Order Info", styles["Heading2"]))
-    field("Date Occurred", report.get("Ngày phát sinh"))
-    field("Supplier", report.get("Nhà cung cấp"))
+    field("Date Occurred", report.get("Date Occurred"))
+    field("Supplier", report.get("Supplier"))
     field("Vendor No.", report.get("Vendor No."))
-    field("Product", report.get("Sản phẩm"))
-    field("Brand", report.get("Thương hiệu"))
+    field("Product", report.get("Product"))
+    field("Product Group", report.get("Product Group"))
+    field("Brand", report.get("Brand"))
     field("SO/PO", report.get("SO/PO"))
-    field("Purchase Order No.", report.get("Lô sản xuất"))
-    field("Order Qty", report.get("Số lượng kiểm"))
-    field("Defect Qty", report.get("Số lượng lỗi"))
-    field("Customer", report.get("Khách hàng"))
+    field("Purchase Order No.", report.get("Purchase Order No."))
+    field("Order Qty", report.get("Quantity Inspected"))
+    field("Defect Qty", report.get("Defect Quantity"))
+    field("Customer", report.get("Customer"))
     field("Client Code", report.get("Client Code"))
 
     story.append(Spacer(1, 8))
     story.append(Paragraph("Issue Details", styles["Heading2"]))
-    field("Description", report.get("Mô tả sự cố"))
-    field("Assessment", report.get("Đánh giá"))
+    field("Description", report.get("Issue Description"))
+    field("Assessment", report.get("Assessment"))
+    field("Recorded By", report.get("Recorded By"))
     field("Defect", report.get("Defect"))
     field("Root Cause", "; ".join(report.get("Root cause") or []) or None)
     field("CAPA", "; ".join(report.get("CAPA") or []) or None)
-    field("Complaint Status", report.get("Trạng thái xử lý complaint"))
-    field("Bear the Claim", report.get("Bear the Claim"))
+    field("Complaint Status", report.get("Complaint Status"))
+    field("Responsible Party", report.get("Responsible Party"))
     field("Replacement Cost", report.get("Replacement Cost"))
 
-    photo_b64 = report.get("Ảnh lỗi")
+    photo_b64 = report.get("Defect Photo")
     if photo_b64:
         try:
             photo_bytes = base64.b64decode(photo_b64)
@@ -620,13 +686,13 @@ def reject(conn, suggestion_id, reviewer_id):
 # 6 CÂU HỎI MỤC TIÊU (giống hệt phase2_queries.py)
 # ============================================================
 TARGET_QUERIES = {
-    "Q1: Supplier gây lỗi nhiều nhất (6 tháng)": """
+    "Q1: Supplier with Most Defects (6 months)": """
         select s.name as nha_cung_cap, count(*) as so_luong
         from complaint c join supplier s on c.supplier_id = s.supplier_id
         where c.date_opened >= current_date - interval '6 months'
         group by s.name order by so_luong desc;
     """,
-    "Q2: Hiệu quả CAPA theo loại": """
+    "Q2: CAPA Effectiveness by Type": """
         select t.capa_type as loai_capa, count(*) as tong_so_lan,
                sum(case when a.verification_result = 'Effective' then 1 else 0 end) as so_lan_hieu_qua
         from capa_action a join capa_taxonomy t on a.capa_code = t.capa_code
@@ -642,7 +708,7 @@ TARGET_QUERIES = {
         where coalesce(p.product_group, ss.product_group) is not null
         group by nhom_san_pham, d.defect_name order by nhom_san_pham, so_luong desc;
     """,
-    "Q4: Root cause category chiếm tỷ trọng lớn nhất (6 tháng)": """
+    "Q4: Most Common Root Cause Category (6 months)": """
         select rc.category as nhom_nguyen_nhan, count(*) as so_luong
         from complaint c join root_cause_taxonomy rc on c.root_cause_code = rc.root_cause_code
         where c.date_opened >= current_date - interval '6 months'
@@ -735,7 +801,7 @@ Bảng complaint(complaint_id PK uuid, complaint_no (CỘT NÀY LUÔN TRỐNG/NU
   brand (text, 1 trong 13 giá trị cố định: GYMSHARK, HESTRA, VAUDE, PASSENGER, NINEPINE, NOSO, SANDQVIST,
   MARTIN MAGNUSSON, STREET ONE & CECIL, FRED PERRY, HELLY HANSEN, JACK WOLFSKIN, LACOSTE),
   customer_id FK->customer, recorded_by FK->cs_staff,
-  complaint_validity (text, 1 trong đúng 2 giá trị: 'Lỗi thật (Nilorn)' hoặc 'Lỗi từ phía khách hàng' —
+  complaint_validity (text, 1 trong đúng 2 giá trị: 'Genuine Defect (Nilorn)' hoặc 'Customer-Caused Issue' —
   do CS tự đánh giá ngay lúc nhập complaint, phân biệt complaint THẬT SỰ do lỗi sản xuất/chất lượng của
   Nilorn, với complaint phát sinh do CHÍNH KHÁCH HÀNG gây ra (ví dụ khách bảo quản sai, dùng sai cách...)
   nhưng vẫn khiếu nại. CHỈ có ý nghĩa cho complaint có customer_id — không áp dụng cho complaint từ luồng
@@ -767,7 +833,7 @@ Bảng supplier_submissions(submission_id PK uuid, submitted_at, record_date, su
   — dữ liệu do NHÀ CUNG CẤP TỰ KHAI BÁO qua link chung (luồng mới, khác với complaint nhập tay).
   MỖI dòng ở đây đều có 1 dòng complaint tương ứng (nối qua complaint.source_submission_id =
   supplier_submissions.submission_id) — ưu tiên dùng đúng bảng này khi câu hỏi nhắc tới Customer,
-  Client Code, Replacement Cost, Bear the Claim, Vendor No., Item No. (những cột chỉ có ở đây,
+  Client Code, Replacement Cost, Responsible Party, Vendor No., Item No. (những cột chỉ có ở đây,
   KHÔNG có trong bảng complaint).
   QUAN TRỌNG khi câu hỏi liên quan tới Product Group: LUÔN dùng
   coalesce(product.product_group, supplier_submissions.product_group) — không chỉ join qua bảng
@@ -793,11 +859,11 @@ không phải là câu trả lời hợp lệ cho câu hỏi "cái nào nhiều 
 
 
 STATUS_LABELS = {
-    "Thiếu Customer": "Thiếu Customer — chưa có thông tin khách hàng",
-    "Thiếu Client": "Thiếu Client — chưa có mã Client Code",
-    "Thiếu Replacement Cost": "Thiếu Replacement Cost — chưa có chi phí bồi thường",
-    "Thiếu xác minh CAPA": "Thiếu xác minh CAPA — CAPA chưa được thực hiện/xác minh hiệu quả",
-    "Closed": "Closed — đã đóng hồ sơ, đầy đủ thông tin",
+    "Thiếu Customer": "Missing Customer Information",
+    "Thiếu Client": "Missing Client Code",
+    "Thiếu Replacement Cost": "Missing Replacement Cost",
+    "Thiếu xác minh CAPA": "CAPA Not Yet Verified",
+    "Closed": "Closed — Case Fully Resolved",
 }
 
 
@@ -871,7 +937,7 @@ def fetch_complaint_full_report(conn, complaint_id):
                    d.defect_code, d.defect_name,
                    st.name, st.role, c.status, c.defect_photo,
                    c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
-                   c.root_cause_code, c.complaint_validity
+                   c.root_cause_code, c.complaint_validity, coalesce(p.product_group, ss.product_group)
             from complaint c
             left join product p on c.product_id = p.product_id
             left join supplier s on c.supplier_id = s.supplier_id
@@ -879,6 +945,7 @@ def fetch_complaint_full_report(conn, complaint_id):
             left join machine m on c.machine_id = m.machine_id
             left join defect_taxonomy d on c.defect_code = d.defect_code
             left join cs_staff st on c.recorded_by = st.staff_id
+            left join supplier_submissions ss on ss.submission_id = c.source_submission_id
             where c.complaint_id = %s;
         """, (complaint_id,))
         row = cur.fetchone()
@@ -912,7 +979,7 @@ def fetch_complaint_full_report(conn, complaint_id):
      so_po, lot_number, qty_inspected, qty_affected, defect_code, defect_name,
      staff_name, staff_role, status, defect_photo,
      client_code, bear_the_claim, replacement_cost, replacement_cost_currency,
-     direct_root_cause_code, complaint_validity) = row
+     direct_root_cause_code, complaint_validity, product_group) = row
 
     root_cause_list = [
         f"{code} — {name}" for code, name in rc_rows
@@ -926,36 +993,37 @@ def fetch_complaint_full_report(conn, complaint_id):
         if direct_rc_row:
             root_cause_list = [f"{direct_root_cause_code} — {direct_rc_row[0]}"]
     capa_list_display = [
-        f"{code} — {name}" + (f" (Phụ trách: {resp})" if resp else "")
+        f"{code} — {name}" + (f" (Responsible: {resp})" if resp else "")
         for code, name, resp in capa_rows
     ]
     pending_text = ", ".join(t for t, _ in pending_rows) if pending_rows else ""
 
     return {
-        "Mã complaint hệ thống": str(complaint_id),
-        "Ngày phát sinh": date_opened.strftime("%d/%m/%Y") if date_opened else "",
-        "Mô tả sự cố": notes or "",
-        "Đánh giá": complaint_validity or COMPLAINT_VALIDITY_OPTIONS[0],
-        "Sản phẩm": product_name or "",
-        "Nhà cung cấp": supplier_name or "",
+        "System Complaint ID": str(complaint_id),
+        "Date Occurred": date_opened.strftime("%d/%m/%Y") if date_opened else "",
+        "Issue Description": notes or "",
+        "Assessment": complaint_validity or COMPLAINT_VALIDITY_OPTIONS[0],
+        "Product": product_name or "",
+        "Product Group": product_group or "",
+        "Supplier": supplier_name or "",
         "Vendor No.": vendor_code or "",
-        "Thương hiệu": brand or "",
-        "Khách hàng": customer_name or "",
+        "Brand": brand or "",
+        "Customer": customer_name or "",
         "Client Code": client_code or "",
-        "Máy liên quan": machine_name or "",
+        "Related Machine": machine_name or "",
         "SO/PO": so_po or "",
-        "Lô sản xuất": lot_number or "",
-        "Số lượng kiểm": qty_inspected,
-        "Số lượng lỗi": qty_affected,
+        "Purchase Order No.": lot_number or "",
+        "Quantity Inspected": qty_inspected,
+        "Defect Quantity": qty_affected,
         "Defect": f"{defect_code} — {defect_name}" if defect_code else "",
         "Root cause": root_cause_list,
         "CAPA": capa_list_display,
-        "Bear the Claim": bear_the_claim or "",
+        "Responsible Party": bear_the_claim or "",
         "Replacement Cost": f"{replacement_cost} {replacement_cost_currency}" if replacement_cost is not None else "",
-        "Ghi nhận bởi": f"{staff_name} ({staff_role})" if staff_name else "",
-        "Trạng thái xử lý complaint": STATUS_LABELS.get(status, status or ""),
-        "Đang chờ duyệt": pending_text,
-        "Ảnh lỗi": defect_photo,
+        "Recorded By": f"{staff_name} ({staff_role})" if staff_name else "",
+        "Complaint Status": STATUS_LABELS.get(status, status or ""),
+        "Pending Approval": pending_text,
+        "Defect Photo": defect_photo,
     }
 
 
@@ -1291,7 +1359,7 @@ def find_best_label_match(value, labels):
 
 def _build_extraction_instructions(today_str, product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list):
     def _fmt_list(items):
-        return ", ".join(items) if items else "(chưa có trong hệ thống)"
+        return ", ".join(items) if items else "(not in the system)"
 
     product_list_text = _fmt_list(product_names)
     customer_list_text = _fmt_list(customer_names)
@@ -1543,9 +1611,9 @@ def draft_supplier_request_email(client, fields, supplier_name, portal_link, sig
 Viết 1 email TIẾNG ANH, chuyên nghiệp, gửi cho nhà cung cấp "{supplier_name}", thông báo về 1 complaint chất
 lượng liên quan tới họ và yêu cầu họ điều tra, dựa trên:
 
-Mô tả sự cố: {fields.get("desc") or "(không có)"}
+Mô tả sự cố: {fields.get("desc") or "(none)"}
 Sản phẩm: {fields.get("product") or "(không rõ)"}
-SO/PO: {fields.get("so_po") or "(không có)"}
+SO/PO: {fields.get("so_po") or "(none)"}
 Số lượng lỗi: {fields.get("quantity") if fields.get("quantity") is not None else "(không rõ)"}
 Link báo cáo: {portal_link}
 
@@ -1583,84 +1651,84 @@ def apply_complaint_prefill_fields(fields):
     st.session_state["prefill_complaint_desc"] = fields["desc"]
     matched_bits = []
 
-    st.session_state["prefill_complaint_product"] = fields["product"] or "-- không rõ --"
+    st.session_state["prefill_complaint_product"] = fields["product"] or "-- unknown --"
     if fields["product"]:
-        matched_bits.append(f"sản phẩm **{fields['product']}**")
+        matched_bits.append(f"product **{fields['product']}**")
 
-    st.session_state["prefill_complaint_customer"] = fields["customer"] or "-- không rõ --"
+    st.session_state["prefill_complaint_customer"] = fields["customer"] or "-- unknown --"
     if fields["customer"]:
-        matched_bits.append(f"khách hàng **{fields['customer']}**")
+        matched_bits.append(f"customer **{fields['customer']}**")
 
-    st.session_state["prefill_complaint_supplier"] = fields["supplier"] or "-- không rõ --"
+    st.session_state["prefill_complaint_supplier"] = fields["supplier"] or "-- unknown --"
     if fields["supplier"]:
-        matched_bits.append(f"nhà cung cấp **{fields['supplier']}**")
+        matched_bits.append(f"supplier **{fields['supplier']}**")
 
-    st.session_state["prefill_complaint_brand"] = fields["brand"] or "-- không rõ --"
+    st.session_state["prefill_complaint_brand"] = fields["brand"] or "-- unknown --"
     if fields["brand"]:
-        matched_bits.append(f"thương hiệu **{fields['brand']}**")
+        matched_bits.append(f"brand **{fields['brand']}**")
 
     st.session_state["prefill_complaint_quantity"] = fields["quantity"] if fields["quantity"] is not None else 0
     if fields["quantity"] is not None:
-        matched_bits.append(f"số lượng lỗi **{fields['quantity']}**")
+        matched_bits.append(f"defect quantity **{fields['quantity']}**")
 
     st.session_state["prefill_complaint_date"] = fields["date"] or datetime.now().date()
     if fields["date"]:
-        matched_bits.append(f"ngày phát sinh **{fields['date'].strftime('%d/%m/%Y')}**")
+        matched_bits.append(f"date occurred **{fields['date'].strftime('%d/%m/%Y')}**")
 
-    st.session_state["prefill_complaint_staff"] = fields["staff"] or "-- chưa chọn --"
+    st.session_state["prefill_complaint_staff"] = fields["staff"] or "-- not selected --"
     if fields["staff"]:
-        matched_bits.append(f"người ghi nhận **{fields['staff']}**")
+        matched_bits.append(f"recorded by **{fields['staff']}**")
 
     root_causes = fields["root_causes"]
     if root_causes:
         first_rc = root_causes[0]
-        st.session_state["prefill_complaint_rc"] = first_rc["code"] or "-- để AI tự phân loại --"
+        st.session_state["prefill_complaint_rc"] = first_rc["code"] or "-- let AI classify --"
         st.session_state["prefill_complaint_rc_new"] = first_rc["new"] or ""
         if first_rc["code"]:
             matched_bits.append(f"root cause **{first_rc['code']}**")
         elif first_rc["new"]:
-            matched_bits.append(f"root cause mới: *{first_rc['new']}*")
+            matched_bits.append(f"new root cause: *{first_rc['new']}*")
     else:
-        st.session_state["prefill_complaint_rc"] = "-- để AI tự phân loại --"
+        st.session_state["prefill_complaint_rc"] = "-- let AI classify --"
         st.session_state["prefill_complaint_rc_new"] = ""
 
     extra_rcs = root_causes[1:]
     st.session_state["prefill_complaint_extra_rc_count"] = len(extra_rcs)
     for i, rc in enumerate(extra_rcs):
-        st.session_state[f"prefill_complaint_extra_rc_{i}_code"] = rc["code"] or "-- để AI tự phân loại --"
+        st.session_state[f"prefill_complaint_extra_rc_{i}_code"] = rc["code"] or "-- let AI classify --"
         st.session_state[f"prefill_complaint_extra_rc_{i}_new"] = rc["new"] or ""
         if rc["code"]:
-            matched_bits.append(f"root cause khác **{rc['code']}**")
+            matched_bits.append(f"other root cause **{rc['code']}**")
         elif rc["new"]:
-            matched_bits.append(f"root cause khác mới: *{rc['new']}*")
+            matched_bits.append(f"other new root cause: *{rc['new']}*")
 
     capas = fields["capas"]
     if capas:
         first_capa = capas[0]
-        st.session_state["prefill_complaint_capa"] = first_capa["code"] or "-- không thêm --"
+        st.session_state["prefill_complaint_capa"] = first_capa["code"] or "-- none --"
         st.session_state["prefill_complaint_capa_new"] = first_capa["new"] or ""
         st.session_state["prefill_complaint_capa_responsible"] = first_capa["responsible"] or ""
         if first_capa["code"]:
             matched_bits.append(f"CAPA **{first_capa['code']}**")
         elif first_capa["new"]:
-            matched_bits.append(f"CAPA mới: *{first_capa['new']}*")
+            matched_bits.append(f"new CAPA: *{first_capa['new']}*")
         if first_capa["responsible"]:
-            matched_bits.append(f"người phụ trách CAPA **{first_capa['responsible']}**")
+            matched_bits.append(f"CAPA responsible person **{first_capa['responsible']}**")
     else:
-        st.session_state["prefill_complaint_capa"] = "-- không thêm --"
+        st.session_state["prefill_complaint_capa"] = "-- none --"
         st.session_state["prefill_complaint_capa_new"] = ""
         st.session_state["prefill_complaint_capa_responsible"] = ""
 
     extra_capas = capas[1:]
     st.session_state["prefill_complaint_extra_capa_count"] = len(extra_capas)
     for i, cp in enumerate(extra_capas):
-        st.session_state[f"prefill_complaint_extra_capa_{i}_code"] = cp["code"] or "-- không thêm --"
+        st.session_state[f"prefill_complaint_extra_capa_{i}_code"] = cp["code"] or "-- none --"
         st.session_state[f"prefill_complaint_extra_capa_{i}_new"] = cp["new"] or ""
         st.session_state[f"prefill_complaint_extra_capa_{i}_resp"] = cp["responsible"] or ""
         if cp["code"]:
-            matched_bits.append(f"CAPA khác **{cp['code']}**")
+            matched_bits.append(f"other CAPA **{cp['code']}**")
         elif cp["new"]:
-            matched_bits.append(f"CAPA khác mới: *{cp['new']}*")
+            matched_bits.append(f"other new CAPA: *{cp['new']}*")
 
     st.session_state["prefill_complaint_so_po"] = fields["so_po"] or ""
     if fields["so_po"]:
@@ -1674,8 +1742,8 @@ def apply_complaint_prefill_fields(fields):
 
 
 def render_create_complaint_suggestion(conn, question, button_key):
-    if st.button("📝 Tạo Complaint mới với mô tả này", key=button_key):
-        with st.spinner("AI đang chuẩn bị mô tả..."):
+    if st.button("📝 Create New Complaint with this description", key=button_key):
+        with st.spinner("AI is preparing the description..."):
             ai_client = get_ai_client()
             (product_names, customer_names, supplier_names,
              staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
@@ -1689,13 +1757,11 @@ def render_create_complaint_suggestion(conn, question, button_key):
 
         if matched_bits:
             st.success(
-                "Đã điền sẵn mô tả (AI viết gọn lại) và tự điền: " + ", ".join(matched_bits) + " — "
-                "sang tab '📝 Complaint mới' để tiếp tục, kiểm tra lại rồi lưu."
+                "Description prefilled (AI summarized) and auto-filled: " + ", ".join(matched_bits) + " — go to the '📝 New Complaint' tab to continue, review then save."
             )
         else:
             st.success(
-                "Đã điền sẵn mô tả (AI viết gọn lại) — sang tab '📝 Complaint mới' để tiếp tục "
-                "(chưa tự nhận diện được trường nào khác, bạn tự điền thêm)."
+                "Description prefilled (AI summarized) — go to the '📝 New Complaint' tab to continue (no other fields auto-detected, please fill in the rest)."
             )
 
 
@@ -1721,18 +1787,18 @@ def generate_supplier_report_link(conn, complaint_id, supplier_name, requested_b
 def draft_customer_reply_email(client, report, compensation_qty):
     root_causes_text = "; ".join(report.get("Root cause") or []) or "(chưa xác định)"
     capa_text = "; ".join(report.get("CAPA") or []) or "(chưa xác định)"
-    recorded_by = report.get("Ghi nhận bởi") or ""
+    recorded_by = report.get("Recorded By") or ""
     signer_name = recorded_by.split(" (")[0].strip() if recorded_by else "Customer Service Team"
     prompt = f"""Bạn là nhân viên CS (Customer Service) tại 1 nhà máy sản xuất nhãn/bao bì apparel branding.
 Viết 1 email TIẾNG ANH, chuyên nghiệp, lịch sự, trả lời complaint của khách hàng, dựa trên thông tin sau:
 
-Mô tả sự cố: {report.get("Mô tả sự cố") or "(không có)"}
-Sản phẩm: {report.get("Sản phẩm") or "(không rõ)"}
-SO/PO: {report.get("SO/PO") or "(không có)"}
+Mô tả sự cố: {report.get("Issue Description") or "(none)"}
+Sản phẩm: {report.get("Product") or "(không rõ)"}
+SO/PO: {report.get("SO/PO") or "(none)"}
 Loại lỗi (Defect): {report.get("Defect") or "(chưa xác định)"}
 Nguyên nhân gốc (Root Cause): {root_causes_text}
 Hành động khắc phục (CAPA) đã/đang triển khai: {capa_text}
-Số lượng sản phẩm bị lỗi: {report.get("Số lượng lỗi") or "(không rõ)"}
+Số lượng sản phẩm bị lỗi: {report.get("Defect Quantity") or "(không rõ)"}
 Số lượng đề xuất bù hàng: {compensation_qty}
 Người ký tên cuối email: {signer_name}
 
@@ -1783,9 +1849,10 @@ Nếu phù hợp, đề xuất 1 hành động tiếp theo.
 # ============================================================
 REGISTER_EXCEL_COLUMNS = [
     "Record Date", "Year-Q", "Vendor No.", "Vendor Name", "Customer", "Client",
-    "Sales Order No.", "Purchase Order No.", "Item No.", "Order Qty", "Defect Qty",
+    "Sales Order No.", "Purchase Order No.", "Item No.", "Product Group", "Order Qty", "Defect Qty",
     "Reason", "Remarks", "Solution", "Result",
-    "Bear the Claim", "Replacement Cost", "Currency", "Report Link",
+    "Responsible Party", "Replacement Cost", "Currency", "Recorded By",
+    "Prepared By", "Position", "Report Link",
 ]
 
 
@@ -1797,8 +1864,9 @@ def fetch_all_submissions(conn):
                    ss.item_no, ss.order_qty, ss.defect_qty, ss.description, ss.root_cause, ss.capa,
                    ss.capa_status, ss.defect_image_urls, ss.defect_video_url,
                    ss.customer_name, ss.client_code, ss.bear_the_claim, ss.replacement_cost,
-                   ss.replacement_cost_currency,
-                   c.status as complaint_status,
+                   ss.replacement_cost_currency, ss.product_group,
+                   c.status as complaint_status, st.name as recorded_by_name,
+                   ss.prepared_by, ss.prepared_by_position,
                    exists(
                        select 1 from capa_action a where a.complaint_id = c.complaint_id
                        and (a.verification_result is null or a.verification_result = 'Pending')
@@ -1809,6 +1877,7 @@ def fetch_all_submissions(conn):
                    ) as has_implemented_capa
             from supplier_submissions ss
             left join complaint c on c.source_submission_id = ss.submission_id
+            left join cs_staff st on c.recorded_by = st.staff_id
             order by ss.submitted_at desc;
         """)
         cols = [d[0] for d in cur.description]
@@ -1824,7 +1893,8 @@ def fetch_legacy_complaints_for_dashboard(conn, cols):
         cur.execute("""
             select c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                    c.quantity_inspected, c.quantity_affected, c.notes, c.status,
-                   c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
+                   c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency, p.product_group,
+                   st.name as recorded_by_name,
                    (select string_agg(distinct x.rc_text, '; ') from (
                         select rc.root_cause as rc_text
                         from complaint_root_cause crc join root_cause_taxonomy rc on crc.root_cause_code = rc.root_cause_code
@@ -1839,12 +1909,14 @@ def fetch_legacy_complaints_for_dashboard(conn, cols):
             left join supplier s on c.supplier_id = s.supplier_id
             left join customer cu on c.customer_id = cu.customer_id
             left join product p on c.product_id = p.product_id
+            left join cs_staff st on c.recorded_by = st.staff_id
             left join capa_action a on a.complaint_id = c.complaint_id
             left join capa_taxonomy cat on a.capa_code = cat.capa_code
             where c.source is distinct from 'Nhà cung cấp tự khai báo (link chung)'
             group by c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                      c.quantity_inspected, c.quantity_affected, c.notes, c.status,
-                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency
+                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency, p.product_group,
+                     st.name
             order by c.date_opened desc;
         """)
         raw_rows = cur.fetchall()
@@ -1853,20 +1925,22 @@ def fetch_legacy_complaints_for_dashboard(conn, cols):
     result = []
     for (complaint_id, date_opened, supplier_name, vendor_code_db, customer_name, product_name, so_po, lot_number,
          qty_inspected, qty_affected, notes, status, client_code_db, bear_the_claim_db,
-         replacement_cost_db, replacement_cost_currency_db, root_causes, capas,
+         replacement_cost_db, replacement_cost_currency_db, product_group_val, recorded_by_name_val, root_causes, capas,
          has_pending_verif, has_implemented) in raw_rows:
         vendor_code = vendor_code_db or _fuzzy_match_lookup_code(conn, "vendor_lookup", "vendor_code", "vendor_name", supplier_name)
         row = [None] * len(cols)
         row[idx["submission_id"]] = f"legacy:{complaint_id}"
         row[idx["submitted_at"]] = datetime.combine(date_opened, datetime.min.time()) if date_opened else datetime.now()
         row[idx["record_date"]] = date_opened
-        row[idx["supplier_name_raw"]] = supplier_name or "(chưa rõ)"
+        row[idx["supplier_name_raw"]] = supplier_name or "(unknown)"
         row[idx["vendor_code"]] = vendor_code
         row[idx["vendor_name_matched"]] = supplier_name
         row[idx["match_confidence"]] = None
         row[idx["sales_order_no"]] = so_po or ""
         row[idx["purchase_order_no"]] = lot_number or ""
         row[idx["item_no"]] = product_name or ""
+        row[idx["product_group"]] = product_group_val or ""
+        row[idx["recorded_by_name"]] = recorded_by_name_val or ""
         row[idx["order_qty"]] = qty_inspected
         row[idx["defect_qty"]] = qty_affected
         row[idx["description"]] = notes or ""
@@ -1888,7 +1962,7 @@ def fetch_legacy_complaints_for_dashboard(conn, cols):
 
 
 def update_submission_cs_fields(conn, submission_id, customer_name, client_code, bear_the_claim,
-                                 replacement_cost, replacement_cost_currency):
+                                 replacement_cost, replacement_cost_currency, recorded_by_staff_id=None):
     with conn.cursor() as cur:
         cur.execute(
             """update supplier_submissions
@@ -1900,10 +1974,22 @@ def update_submission_cs_fields(conn, submission_id, customer_name, client_code,
         )
     conn.commit()
     with conn.cursor() as cur:
-        cur.execute("select complaint_id from complaint where source_submission_id = %s;", (submission_id,))
+        cur.execute(
+            "select complaint_id, recorded_by, so_po from complaint where source_submission_id = %s;",
+            (submission_id,),
+        )
         row = cur.fetchone()
     if row:
-        compute_and_update_complaint_status(conn, row[0])
+        complaint_id, old_recorded_by, so_po = row
+        if recorded_by_staff_id is not None and recorded_by_staff_id != old_recorded_by:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "update complaint set recorded_by = %s where complaint_id = %s;",
+                    (recorded_by_staff_id, complaint_id),
+                )
+            conn.commit()
+            notify_recorded_by_assignment(conn, complaint_id, recorded_by_staff_id, so_po)
+        compute_and_update_complaint_status(conn, complaint_id)
 
 
 def normalize_submission_row_for_excel(cols, row):
@@ -1920,15 +2006,19 @@ def normalize_submission_row_for_excel(cols, row):
         "Sales Order No.": row[idx["sales_order_no"]],
         "Purchase Order No.": row[idx["purchase_order_no"]],
         "Item No.": row[idx["item_no"]],
+        "Product Group": row[idx["product_group"]] or "",
         "Order Qty": row[idx["order_qty"]],
         "Defect Qty": row[idx["defect_qty"]],
         "Reason": row[idx["description"]],
         "Remarks": row[idx["root_cause"]],
         "Solution": row[idx["capa"]],
         "Result": row[idx["complaint_status"]] or "Thiếu Customer",
-        "Bear the Claim": row[idx["bear_the_claim"]],
+        "Responsible Party": row[idx["bear_the_claim"]],
         "Replacement Cost": row[idx["replacement_cost"]],
         "Currency": row[idx["replacement_cost_currency"]],
+        "Recorded By": row[idx["recorded_by_name"]] or "",
+        "Prepared By": row[idx["prepared_by"]] or "",
+        "Position": row[idx["prepared_by_position"]] or "",
         "_report_link": f"{REVIEW_APP_URL}/?submission_id={row[idx['submission_id']]}",
     }
 
@@ -1977,7 +2067,8 @@ def fetch_legacy_complaints_for_excel(conn):
         cur.execute("""
             select c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, c.so_po, c.lot_number, p.name,
                    c.quantity_inspected, c.quantity_affected, c.notes, c.status,
-                   c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
+                   c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency, p.product_group,
+                   st.name as recorded_by_name,
                    (select string_agg(distinct x.rc_text, '; ') from (
                         select rc.root_cause as rc_text
                         from complaint_root_cause crc join root_cause_taxonomy rc on crc.root_cause_code = rc.root_cause_code
@@ -1990,12 +2081,14 @@ def fetch_legacy_complaints_for_excel(conn):
             left join supplier s on c.supplier_id = s.supplier_id
             left join customer cu on c.customer_id = cu.customer_id
             left join product p on c.product_id = p.product_id
+            left join cs_staff st on c.recorded_by = st.staff_id
             left join capa_action ca on ca.complaint_id = c.complaint_id
             left join capa_taxonomy cat on ca.capa_code = cat.capa_code
             where c.source is distinct from 'Nhà cung cấp tự khai báo (link chung)'
             group by c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, c.so_po, c.lot_number, p.name,
                      c.quantity_inspected, c.quantity_affected, c.notes, c.status,
-                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency
+                     c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency, p.product_group,
+                     st.name
             order by c.date_opened desc;
         """)
         rows = cur.fetchall()
@@ -2003,7 +2096,7 @@ def fetch_legacy_complaints_for_excel(conn):
     result = []
     for (complaint_id, date_opened, supplier_name, vendor_code_db, customer_name, so_po, lot_number, product_name,
          qty_inspected, qty_affected, notes, status, client_code_db, bear_the_claim_db,
-         replacement_cost_db, replacement_cost_currency_db, root_causes, capas) in rows:
+         replacement_cost_db, replacement_cost_currency_db, product_group_val, recorded_by_name_val, root_causes, capas) in rows:
         year_q = f"{date_opened.year}-Q{(date_opened.month - 1) // 3 + 1}" if date_opened else ""
         vendor_code = vendor_code_db or _fuzzy_match_lookup_code(conn, "vendor_lookup", "vendor_code", "vendor_name", supplier_name)
         client_code = client_code_db or _fuzzy_match_lookup_code(conn, "client_lookup", "client_code", "client_name", customer_name)
@@ -2017,15 +2110,17 @@ def fetch_legacy_complaints_for_excel(conn):
             "Sales Order No.": so_po or "",
             "Purchase Order No.": lot_number or "",
             "Item No.": product_name or "",
+            "Product Group": product_group_val or "",
             "Order Qty": qty_inspected,
             "Defect Qty": qty_affected,
             "Reason": notes or "",
             "Remarks": root_causes or "",
             "Solution": capas or "",
             "Result": STATUS_LABELS.get(status, status or ""),
-            "Bear the Claim": bear_the_claim_db or "",
+            "Responsible Party": bear_the_claim_db or "",
             "Replacement Cost": replacement_cost_db,
             "Currency": replacement_cost_currency_db or "",
+            "Recorded By": recorded_by_name_val or "",
             "_report_link": f"{REVIEW_APP_URL}/?submission_id=legacy:{complaint_id}",
         })
     return result
@@ -2064,7 +2159,7 @@ def build_register_excel(normalized_rows):
     for norm_row in normalized_rows:
         excel_row = [norm_row.get(col, "") for col in REGISTER_EXCEL_COLUMNS]
         report_link = norm_row.get("_report_link")
-        excel_row[-1] = "Xem chi tiết / View detail" if report_link else ""
+        excel_row[-1] = "View detail" if report_link else ""
         ws.append(excel_row)
         r = ws.max_row
         for c in range(1, n_cols + 1):
@@ -2100,9 +2195,12 @@ def _fetch_submission_by_id(conn, submission_id):
                    ss.item_no, ss.order_qty, ss.defect_qty, ss.description, ss.root_cause, ss.capa,
                    ss.defect_image_urls, ss.defect_video_url,
                    ss.customer_name, ss.client_code, ss.bear_the_claim, ss.replacement_cost,
-                   ss.replacement_cost_currency, c.status as complaint_status, c.complaint_id
+                   ss.replacement_cost_currency, ss.product_group, c.status as complaint_status, c.complaint_id,
+                   c.recorded_by, st.name as recorded_by_name,
+                   ss.prepared_by, ss.prepared_by_position, ss.signature_image_url
             from supplier_submissions ss
             left join complaint c on c.source_submission_id = ss.submission_id
+            left join cs_staff st on c.recorded_by = st.staff_id
             where ss.submission_id = %s;
         """, (submission_id,))
         row = cur.fetchone()
@@ -2124,7 +2222,7 @@ def export_submission_word(sub):
     style.paragraph_format.space_before = Pt(0)
     style.paragraph_format.space_after = Pt(4)
 
-    title = doc.add_heading("Supplier Quality Report — Chi tiết", level=0)
+    title = doc.add_heading("Supplier Quality Report — Detail", level=0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     def field(label, value):
@@ -2133,29 +2231,31 @@ def export_submission_word(sub):
         p.add_run(f"{label}: ").bold = True
         p.add_run(str(value) if value not in (None, "") else "")
 
-    doc.add_heading("I. Thông tin đơn hàng / Order Info", level=1)
+    doc.add_heading("Order Info", level=1)
     field("Supplier (as reported)", sub["supplier_name_raw"])
-    field("Vendor No.", sub["vendor_code"] or "(chưa khớp / unmatched)")
+    field("Vendor No.", sub["vendor_code"] or "unmatched)")
     field("Vendor Name", sub["vendor_name_matched"])
     field("Sales Order No.", sub["sales_order_no"])
     field("Purchase Order No.", sub["purchase_order_no"])
     field("Item No.", sub["item_no"])
+    field("Product Group", sub.get("product_group"))
+    field("Recorded By", sub.get("recorded_by_name"))
     field("Order Qty", sub["order_qty"])
     field("Defect Qty", sub["defect_qty"])
     field("Customer", sub["customer_name"])
     field("Client Code", sub["client_code"])
 
-    doc.add_heading("II. Chi tiết lỗi / Issue Details", level=1)
+    doc.add_heading("Issue Details", level=1)
     field("Description", sub["description"])
     field("Root Cause", sub["root_cause"])
     field("CAPA", sub["capa"])
     field("Complaint Status", sub.get("complaint_status") or "Thiếu Customer")
-    field("Bear the Claim", sub["bear_the_claim"])
+    field("Responsible Party", sub["bear_the_claim"])
     field("Replacement Cost", f"{sub['replacement_cost']} {sub['replacement_cost_currency']}" if sub["replacement_cost"] is not None else "")
 
     image_urls = sub.get("defect_image_urls") or []
     if image_urls:
-        doc.add_heading("III. Hình ảnh / Photos", level=1)
+        doc.add_heading("Photos", level=1)
         for url in image_urls:
             try:
                 img_resp = requests.get(url, timeout=15)
@@ -2167,6 +2267,19 @@ def export_submission_word(sub):
 
     if sub.get("defect_video_url"):
         doc.add_paragraph().add_run(f"Video: {sub['defect_video_url']}").italic = True
+
+    doc.add_paragraph()
+    doc.add_heading("IV. Prepared By", level=1)
+    field("Record Date", sub.get("record_date"))
+    if sub.get("signature_image_url"):
+        try:
+            sig_resp = requests.get(sub["signature_image_url"], timeout=15)
+            if sig_resp.status_code == 200:
+                doc.add_picture(io.BytesIO(sig_resp.content), width=Inches(1.5))
+        except Exception:
+            pass
+    field("Name", sub.get("prepared_by"))
+    field("Position", sub.get("prepared_by_position"))
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -2197,6 +2310,8 @@ def export_submission_pdf(sub):
     field("Sales Order No.", sub["sales_order_no"])
     field("Purchase Order No.", sub["purchase_order_no"])
     field("Item No.", sub["item_no"])
+    field("Product Group", sub.get("product_group"))
+    field("Recorded By", sub.get("recorded_by_name"))
     field("Order Qty", sub["order_qty"])
     field("Defect Qty", sub["defect_qty"])
     field("Customer", sub["customer_name"])
@@ -2208,7 +2323,7 @@ def export_submission_pdf(sub):
     field("Root Cause", sub["root_cause"])
     field("CAPA", sub["capa"])
     field("Complaint Status", sub.get("complaint_status") or "Thiếu Customer")
-    field("Bear the Claim", sub["bear_the_claim"])
+    field("Responsible Party", sub["bear_the_claim"])
     field("Replacement Cost", f"{sub['replacement_cost']} {sub['replacement_cost_currency']}" if sub["replacement_cost"] is not None else "-")
 
     image_urls = sub.get("defect_image_urls") or []
@@ -2223,6 +2338,20 @@ def export_submission_pdf(sub):
                     story.append(Spacer(1, 8))
             except Exception:
                 pass
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Prepared By", styles["Heading2"]))
+    field("Record Date", sub.get("record_date"))
+    if sub.get("signature_image_url"):
+        try:
+            sig_resp = requests.get(sub["signature_image_url"], timeout=15)
+            if sig_resp.status_code == 200:
+                story.append(RLImage(io.BytesIO(sig_resp.content), width=1.5 * inch, height=1 * inch, kind="proportional"))
+                story.append(Spacer(1, 4))
+        except Exception:
+            pass
+    field("Name", sub.get("prepared_by"))
+    field("Position", sub.get("prepared_by_position"))
 
     doc.build(story)
     return buf.getvalue()
@@ -2397,8 +2526,8 @@ def repair_orphaned_submission(conn, ai_client, submission_id, record_date, supp
         ]:
             closest = (result or {}).get("closest_existing_code") or (result or {}).get("matched_code")
             reasoning = (
-                f"Do nhà cung cấp tự gõ khi nộp báo cáo qua link chung (khôi phục do lỗi kỹ thuật). "
-                f"AI gợi ý: {(result or {}).get('reasoning', '(không phân loại được)')}"
+                f"Typed by the supplier when submitting via the shared link (recovered from a technical issue). "
+                f"AI suggestion: {(result or {}).get('reasoning', '(could not classify)')}"
             )
             cur.execute(
                 """insert into taxonomy_suggestion
@@ -2440,8 +2569,8 @@ def suggest_root_cause_for_complaint(conn, ai_client, complaint_id, description_
         result = None
     closest = (result or {}).get("closest_existing_code") or (result or {}).get("matched_code")
     reasoning = (
-        f"Bổ sung sau (complaint gốc thiếu Root Cause khi import). "
-        f"AI gợi ý: {(result or {}).get('reasoning', '(không phân loại được)')}"
+        f"Added later (original complaint was missing Root Cause on import). "
+        f"AI suggestion: {(result or {}).get('reasoning', '(could not classify)')}"
     )
     with conn.cursor() as cur:
         cur.execute(
@@ -2455,8 +2584,12 @@ def suggest_root_cause_for_complaint(conn, ai_client, complaint_id, description_
 
 
 def update_legacy_complaint_cs_fields(conn, complaint_id, customer_name, client_code, bear_the_claim,
-                                       replacement_cost, replacement_cost_currency, complaint_validity=None):
+                                       replacement_cost, replacement_cost_currency, complaint_validity=None,
+                                       recorded_by_staff_id=None):
     customer_id = get_or_create_customer(conn, customer_name) if customer_name else None
+    with conn.cursor() as cur:
+        cur.execute("select recorded_by, so_po from complaint where complaint_id = %s;", (complaint_id,))
+        old_recorded_by, so_po = cur.fetchone()
     with conn.cursor() as cur:
         cur.execute(
             """update complaint
@@ -2467,15 +2600,23 @@ def update_legacy_complaint_cs_fields(conn, complaint_id, customer_name, client_
              replacement_cost_currency, complaint_validity, complaint_id),
         )
     conn.commit()
+    if recorded_by_staff_id is not None and recorded_by_staff_id != old_recorded_by:
+        with conn.cursor() as cur:
+            cur.execute(
+                "update complaint set recorded_by = %s where complaint_id = %s;",
+                (recorded_by_staff_id, complaint_id),
+            )
+        conn.commit()
+        notify_recorded_by_assignment(conn, complaint_id, recorded_by_staff_id, so_po)
     compute_and_update_complaint_status(conn, complaint_id)
 
 
 def render_legacy_complaint_detail_page(conn, complaint_id):
     """Trang chi tiết cho complaint tạo tay qua 'Complaint mới' — giờ có đầy đủ Customer/Client
-    Code/Bear the Claim/Replacement Cost y hệt luồng NCC tự khai báo, tự điền sẵn nếu đã có dữ liệu
+    Code/Responsible Party/Replacement Cost y hệt luồng NCC tự khai báo, tự điền sẵn nếu đã có dữ liệu
     (Customer từ lúc nhập complaint, Vendor No./Client Code tự dò bằng đối chiếu gần đúng)."""
     if st.session_state.get("selected_submission_id"):
-        if st.button("← Quay lại Dashboard / Back to Dashboard"):
+        if st.button("Back to Dashboard"):
             st.session_state.selected_submission_id = None
             st.session_state.current_page = "dashboard"
             st.rerun()
@@ -2485,7 +2626,8 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             select c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                    c.quantity_inspected, c.quantity_affected, c.notes, c.status,
                    c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
-                   c.complaint_validity,
+                   c.complaint_validity, coalesce(p.product_group, ss.product_group) as product_group_val,
+                   c.recorded_by, st.name as recorded_by_name,
                    (select string_agg(distinct x.rc_text, '; ') from (
                         select rc.root_cause as rc_text
                         from complaint_root_cause crc join root_cause_taxonomy rc on crc.root_cause_code = rc.root_cause_code
@@ -2498,58 +2640,74 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             left join supplier s on c.supplier_id = s.supplier_id
             left join customer cu on c.customer_id = cu.customer_id
             left join product p on c.product_id = p.product_id
+            left join supplier_submissions ss on ss.submission_id = c.source_submission_id
+            left join cs_staff st on c.recorded_by = st.staff_id
             left join capa_action a on a.complaint_id = c.complaint_id
             left join capa_taxonomy cat on a.capa_code = cat.capa_code
             where c.complaint_id = %s
             group by c.complaint_id, c.date_opened, s.name, s.vendor_code, cu.name, p.name, c.so_po, c.lot_number,
                      c.quantity_inspected, c.quantity_affected, c.notes, c.status,
                      c.client_code, c.bear_the_claim, c.replacement_cost, c.replacement_cost_currency,
-                     c.complaint_validity;
+                     c.complaint_validity, ss.product_group, p.product_group, c.recorded_by, st.name;
         """, (complaint_id,))
         row = cur.fetchone()
     if not row:
-        st.error("Không tìm thấy complaint này. / Complaint not found.")
+        st.error("Complaint not found.")
         return
     (date_opened, supplier_name, vendor_code_db, customer_name, product_name, so_po, lot_number,
      qty_inspected, qty_affected, notes, status, client_code_db, bear_the_claim_db,
-     replacement_cost_db, replacement_cost_currency_db, complaint_validity_db, root_causes, capas) = row
+     replacement_cost_db, replacement_cost_currency_db, complaint_validity_db, product_group_val,
+     recorded_by_db, recorded_by_name, root_causes, capas) = row
 
     vendor_code = vendor_code_db or _fuzzy_match_lookup_code(conn, "vendor_lookup", "vendor_code", "vendor_name", supplier_name)
     client_code_suggested = client_code_db or _fuzzy_match_lookup_code(
         conn, "client_lookup", "client_code", "client_name", customer_name
     )
 
-    st.title("📄 Chi tiết complaint (nhập tay) / Complaint Detail (manual entry)")
-    st.caption(f"Ngày phát sinh / Date occurred: {date_opened}")
+    st.title("Complaint Detail (manual entry)")
+    st.caption(f"Date occurred: {date_opened}")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### Thông tin đơn hàng")
-        st.write(f"**Nhà cung cấp:** {supplier_name or '(chưa rõ)'}")
-        st.write(f"**Vendor No.:** {vendor_code or '(chưa khớp)'}")
-        st.write(f"**Sản phẩm (Item No.):** {product_name or '(chưa rõ)'}")
-        st.write(f"**Sales Order No.:** {so_po or '(trống)'}")
-        st.write(f"**Purchase Order No.:** {lot_number or '(trống)'}")
+        st.markdown("#### Order Information")
+        st.write(f"**Supplier:** {supplier_name or '(unknown)'}")
+        st.write(f"**Vendor No.:** {vendor_code or '(unmatched)'}")
+        st.write(f"**Product (Item No.):** {product_name or '(unknown)'}")
+        st.write(f"**Product Group:** {product_group_val or '-'}")
+        st.write(f"**Recorded by:** {recorded_by_name or 'not assigned)'}")
+        st.write(f"**Sales Order No.:** {so_po or '(empty)'}")
+        st.write(f"**Purchase Order No.:** {lot_number or '(empty)'}")
         st.write(f"**Order Qty:** {qty_inspected} | **Defect Qty:** {qty_affected}")
     with col2:
-        st.markdown("#### Chi tiết lỗi")
-        st.write(f"**Mô tả:** {notes or '(trống)'}")
-        st.write(f"**Đánh giá:** {complaint_validity_db or COMPLAINT_VALIDITY_OPTIONS[0]}")
-        st.write(f"**Root Cause:** {root_causes or '(chưa duyệt/chưa có)'}")
-        st.write(f"**CAPA:** {capas or '(chưa duyệt/chưa có)'}")
+        st.markdown("#### Issue Details")
+        st.write(f"**Description:** {notes or '(empty)'}")
+        st.write(f"**Assessment:** {complaint_validity_db or COMPLAINT_VALIDITY_OPTIONS[0]}")
+        st.write(f"**Root Cause:** {root_causes or '(not yet approved / none)'}")
+        st.write(f"**CAPA:** {capas or '(not yet approved / none)'}")
 
     st.markdown("---")
     with zone_card("amber"):
-        section_header("✏️", "Bổ sung thông tin — Customer & Replacement Cost", "amber")
+        section_header("✏️", "Additional Information — Customer & Replacement Cost", "amber")
         with st.form(f"legacy_edit_form_{complaint_id}"):
             e_col1, e_col2 = st.columns(2)
             with e_col1:
                 customer_name_in = st.text_input("Customer", value=customer_name or "")
                 client_code_in = st.text_input("Client Code", value=client_code_suggested or "")
+                cs_staff_list_legacy = fetch_cs_staff(conn)
+                staff_labels_legacy = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_legacy]
+                current_recorded_by_label_legacy = next(
+                    (f"{name} ({role})" for _, name, role in cs_staff_list_legacy if name == recorded_by_name),
+                    None,
+                )
+                recorded_by_choice_legacy = st.selectbox(
+                    "Recorded by", staff_labels_legacy,
+                    index=staff_labels_legacy.index(current_recorded_by_label_legacy) if current_recorded_by_label_legacy in staff_labels_legacy else 0,
+                    help="Select the CS in charge — notification emails will also go to this person, in addition to the shared CS inbox.",
+                )
             with e_col2:
                 bear_options = ["100% Nilorn", "100% Customer", "50/50", "Other"]
                 bear_the_claim_in = st.selectbox(
-                    "Bear the Claim", bear_options,
+                    "Responsible Party", bear_options,
                     index=bear_options.index(bear_the_claim_db) if bear_the_claim_db in bear_options else 0,
                 )
                 rc_col1, rc_col2 = st.columns([2, 1])
@@ -2563,27 +2721,29 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                         index=["USD", "VND"].index(replacement_cost_currency_db or "USD"),
                     )
                 no_cost_in = st.checkbox(
-                    "Complaint này không phát sinh chi phí bồi thường (Replacement Cost = 0) / "
                     "No replacement cost for this complaint",
                     value=(replacement_cost_db == 0),
-                    help="Tick vào đây để xác nhận rõ ràng là 0, tránh bị nhầm với 'chưa điền' — "
-                         "nếu để trống/0 mà KHÔNG tick, hệ thống vẫn coi là chưa xác định và giữ badge nhắc nhở.",
+                    help="Check this to explicitly confirm zero, to avoid confusion with 'not filled in' — if left blank/0 WITHOUT checking, the system still treats it as undetermined and keeps the reminder badge.",
                 )
             with validity_radio_box():
                 complaint_validity_in = st.radio(
-                    "Đánh giá / Assessment", COMPLAINT_VALIDITY_OPTIONS,
+                    "Assessment", COMPLAINT_VALIDITY_OPTIONS,
                     index=COMPLAINT_VALIDITY_OPTIONS.index(complaint_validity_db) if complaint_validity_db in COMPLAINT_VALIDITY_OPTIONS else 0,
                     horizontal=True,
-                    help="Cập nhật lại nếu sau khi điều tra phát hiện khác với đánh giá ban đầu lúc nhập. "
-                         "/ Update this if further investigation reveals a different conclusion than the initial entry.",
+                    help="Update this if further investigation reveals a different conclusion than the initial entry.",
                 )
-            if st.form_submit_button("💾 Lưu / Save"):
+            if st.form_submit_button("Save"):
                 final_cost_in = 0.0 if no_cost_in else (replacement_cost_in or None)
+                recorded_by_staff_id_legacy = (
+                    None if recorded_by_choice_legacy.startswith("--")
+                    else cs_staff_list_legacy[staff_labels_legacy.index(recorded_by_choice_legacy) - 1][0]
+                )
                 update_legacy_complaint_cs_fields(
                     conn, complaint_id, customer_name_in, client_code_in,
                     bear_the_claim_in, final_cost_in, currency_in, complaint_validity_in,
+                    recorded_by_staff_id_legacy,
                 )
-                st.success("Đã lưu. / Saved.")
+                st.success("Saved.")
                 st.rerun()
 
     st.markdown("---")
@@ -2591,7 +2751,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
     col_word, col_pdf = st.columns(2)
     with col_word:
         st.download_button(
-            "⬇️ Tải Word / Download Word",
+            "Download Word",
             data=export_word_report(full_report_legacy),
             file_name=f"Complaint_{complaint_id}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -2604,26 +2764,26 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             mime="application/pdf",
         )
 
-    with st.expander("📷 Thay ảnh minh họa lỗi / Replace defect photo"):
-        if full_report_legacy.get("Ảnh lỗi"):
-            render_zoomable_image(full_report_legacy["Ảnh lỗi"], width=220, caption="Ảnh hiện tại / Current photo")
+    with st.expander("Replace defect photo"):
+        if full_report_legacy.get("Defect Photo"):
+            render_zoomable_image(full_report_legacy["Defect Photo"], width=220, caption="Current photo")
         new_defect_photo_legacy = st.file_uploader(
-            "Ảnh minh họa lỗi / Defect photo", type=["png", "jpg", "jpeg"],
+            "Defect photo", type=["png", "jpg", "jpeg"],
             key=f"attach_defect_photo_legacy_{complaint_id}",
         )
-        if new_defect_photo_legacy is not None and st.button("💾 Lưu ảnh / Save photo", key=f"btn_save_defect_photo_legacy_{complaint_id}"):
+        if new_defect_photo_legacy is not None and st.button("Save photo", key=f"btn_save_defect_photo_legacy_{complaint_id}"):
             photo_b64_legacy = base64.b64encode(new_defect_photo_legacy.getvalue()).decode("utf-8")
             with conn.cursor() as cur:
                 cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64_legacy, complaint_id))
             conn.commit()
-            st.success("Đã lưu ảnh. / Photo saved.")
+            st.success("Photo saved.")
             st.rerun()
 
     st.markdown("---")
     missing_tags_now = compute_and_update_complaint_status(conn, complaint_id)
     badges_html_now = "".join(status_badge_html(t) for t in missing_tags_now) if missing_tags_now else status_badge_html("Closed")
     st.markdown(
-        f"Trạng thái hiện tại (tự động tính theo dữ liệu còn thiếu): {badges_html_now}",
+        f"Current status (auto-calculated based on missing data): {badges_html_now}",
         unsafe_allow_html=True,
     )
 
@@ -2631,30 +2791,35 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
 def render_submission_detail_page(conn, submission_id):
     sub = _fetch_submission_by_id(conn, submission_id)
     if not sub:
-        st.error("Không tìm thấy báo cáo này. / Report not found.")
+        st.error("Report not found.")
         return
 
     if st.session_state.get("selected_submission_id"):
-        if st.button("← Quay lại Dashboard / Back to Dashboard"):
+        if st.button("Back to Dashboard"):
             st.session_state.selected_submission_id = None
             st.session_state.current_page = "dashboard"
             st.rerun()
 
-    st.title("📄 Chi tiết báo cáo / Report Detail")
+    st.title("Report Detail")
     st.caption(f"Record Date: {sub.get('record_date')}")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("#### Thông tin đơn hàng")
-        st.write(f"**Supplier (tự khai):** {sub['supplier_name_raw']}")
-        st.write(f"**Vendor No.:** {sub['vendor_code'] or '(chưa khớp)'}")
+        st.markdown("#### Order Information")
+        st.write(f"**Supplier (self-reported):** {sub['supplier_name_raw']}")
+        st.write(f"**Vendor No.:** {sub['vendor_code'] or '(unmatched)'}")
         st.write(f"**Vendor Name:** {sub['vendor_name_matched'] or '-'}")
         st.write(f"**Sales Order No.:** {sub['sales_order_no']}")
         st.write(f"**Purchase Order No.:** {sub['purchase_order_no']}")
         st.write(f"**Item No.:** {sub['item_no']}")
+        st.write(f"**Product Group:** {sub.get('product_group') or '-'}")
+        st.write(f"**Recorded by:** {sub.get('recorded_by_name') or 'not assigned)'}")
+        st.write(f"**Prepared by:** {sub.get('prepared_by') or '-'} ({sub.get('prepared_by_position') or '-'})")
+        if sub.get("signature_image_url"):
+            st.image(sub["signature_image_url"], width=150, caption="Signature")
         st.write(f"**Order Qty:** {sub['order_qty']} | **Defect Qty:** {sub['defect_qty']}")
     with col2:
-        st.markdown("#### Chi tiết lỗi")
+        st.markdown("#### Issue Details")
         st.write(f"**Description:** {sub['description']}")
         st.write(f"**Root Cause:** {sub['root_cause']}")
         st.write(f"**CAPA:** {sub['capa']}")
@@ -2662,27 +2827,40 @@ def render_submission_detail_page(conn, submission_id):
 
     image_urls = sub.get("defect_image_urls") or []
     if image_urls:
-        st.markdown("#### 📷 Ảnh lỗi")
+        st.markdown("#### 📷 Defect Photos")
         img_cols = st.columns(len(image_urls))
         for col, url in zip(img_cols, image_urls):
             with col:
                 render_zoomable_image(requests.get(url, timeout=15).content, width=200)
 
     if sub.get("defect_video_url"):
-        st.markdown("#### 🎥 Video lỗi")
+        st.markdown("#### 🎥 Defect Video")
         st.video(sub["defect_video_url"])
 
     st.markdown("---")
     with zone_card("amber"):
-        section_header("✏️", "Bổ sung thông tin — Customer & Replacement Cost", "amber")
+        section_header("✏️", "Additional Information — Customer & Replacement Cost", "amber")
         with st.form(f"edit_form_{submission_id}"):
             e_col1, e_col2 = st.columns(2)
             with e_col1:
                 customer_name_in = st.text_input("Customer", value=sub.get("customer_name") or "")
                 client_code_in = st.text_input("Client Code", value=sub.get("client_code") or "")
+                cs_staff_list_sub = fetch_cs_staff(conn)
+                staff_labels_sub = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_sub]
+                current_recorded_by_label = None
+                if sub.get("recorded_by_name"):
+                    current_recorded_by_label = next(
+                        (lbl for _, name, role in cs_staff_list_sub for lbl in [f"{name} ({role})"] if name == sub["recorded_by_name"]),
+                        None,
+                    )
+                recorded_by_choice_sub = st.selectbox(
+                    "Recorded by", staff_labels_sub,
+                    index=staff_labels_sub.index(current_recorded_by_label) if current_recorded_by_label in staff_labels_sub else 0,
+                    help="Select the CS in charge — notification emails will also go to this person, in addition to the shared CS inbox.",
+                )
             with e_col2:
                 bear_the_claim_in = st.selectbox(
-                    "Bear the Claim",
+                    "Responsible Party",
                     ["100% Nilorn", "100% Customer", "50/50", "Other"],
                     index=["100% Nilorn", "100% Customer", "50/50", "Other"].index(sub.get("bear_the_claim") or "100% Nilorn")
                     if (sub.get("bear_the_claim") or "100% Nilorn") in ["100% Nilorn", "100% Customer", "50/50", "Other"] else 0,
@@ -2698,19 +2876,21 @@ def render_submission_detail_page(conn, submission_id):
                         index=["USD", "VND"].index(sub.get("replacement_cost_currency") or "USD"),
                     )
                 no_cost_in = st.checkbox(
-                    "Complaint này không phát sinh chi phí bồi thường (Replacement Cost = 0) / "
                     "No replacement cost for this complaint",
                     value=(sub.get("replacement_cost") == 0),
-                    help="Tick vào đây để xác nhận rõ ràng là 0, tránh bị nhầm với 'chưa điền' — "
-                         "nếu để trống/0 mà KHÔNG tick, hệ thống vẫn coi là chưa xác định và giữ badge nhắc nhở.",
+                    help="Check this to explicitly confirm zero, to avoid confusion with 'not filled in' — if left blank/0 WITHOUT checking, the system still treats it as undetermined and keeps the reminder badge.",
                 )
-            if st.form_submit_button("💾 Lưu / Save"):
+            if st.form_submit_button("Save"):
                 final_cost_in = 0.0 if no_cost_in else (replacement_cost_in or None)
+                recorded_by_staff_id_sub = (
+                    None if recorded_by_choice_sub.startswith("--")
+                    else cs_staff_list_sub[staff_labels_sub.index(recorded_by_choice_sub) - 1][0]
+                )
                 update_submission_cs_fields(
                     conn, submission_id, customer_name_in, client_code_in,
-                    bear_the_claim_in, final_cost_in, currency_in,
+                    bear_the_claim_in, final_cost_in, currency_in, recorded_by_staff_id_sub,
                 )
-                st.success("Đã lưu. / Saved.")
+                st.success("Saved.")
                 st.rerun()
 
     st.markdown("---")
@@ -2718,36 +2898,33 @@ def render_submission_detail_page(conn, submission_id):
         missing_tags_now = compute_and_update_complaint_status(conn, sub["complaint_id"])
         badges_html_now = "".join(status_badge_html(t) for t in missing_tags_now) if missing_tags_now else status_badge_html("Closed")
         st.markdown(
-            f"Trạng thái hiện tại (tự động) / Current status (automatic): {badges_html_now}",
+            f"Current status (automatic): {badges_html_now}",
             unsafe_allow_html=True,
         )
     else:
         st.error(
-            "⚠️ Báo cáo này chưa có complaint liên kết (complaint_id trống) — trạng thái không tính "
-            "được. Vào tab 'Truy xuất dữ liệu' để khôi phục. / This report has no linked complaint — "
-            "status cannot be computed. Go to 'Data Lookup' to repair it."
+            "This report has no linked complaint — status cannot be computed. Go to 'Data Lookup' to repair it."
         )
 
-    with st.expander("🖼️ Thay ảnh/video lỗi"):
+    with st.expander("🖼️ Replace defect photo/video"):
         st.caption(
-            "Chọn ảnh/video mới rồi bấm Cập nhật — sẽ THAY THẾ hoàn toàn ảnh/video hiện tại của báo "
-            "cáo này (không cộng dồn thêm). Không chọn gì thì giữ nguyên như cũ."
+            "Select new photo/video and click Update — this will FULLY REPLACE the current photo/video for this report (not additive). Leave blank to keep as-is."
         )
         new_images = st.file_uploader(
-            "Ảnh mới (tối đa 3, để trống nếu giữ nguyên)", type=["png", "jpg", "jpeg"],
+            "New photos (up to 3, leave blank to keep current)", type=["png", "jpg", "jpeg"],
             accept_multiple_files=True, key=f"replace_images_{submission_id}",
         )
         new_video = st.file_uploader(
-            "Video mới (để trống nếu giữ nguyên)", type=["mp4", "mov", "avi", "webm"],
+            "New video (leave blank to keep current)", type=["mp4", "mov", "avi", "webm"],
             key=f"replace_video_{submission_id}",
         )
-        if st.button("🔄 Cập nhật ảnh/video", key=f"btn_replace_media_{submission_id}"):
+        if st.button("🔄 Update photo/video", key=f"btn_replace_media_{submission_id}"):
             if not new_images and not new_video:
-                st.warning("Chưa chọn ảnh/video nào để thay.")
+                st.warning("No photo/video selected to replace.")
             else:
                 try:
                     import json as _json
-                    with st.spinner("Đang tải lên..."):
+                    with st.spinner("Uploading..."):
                         final_image_urls = sub.get("defect_image_urls") or []
                         if new_images:
                             final_image_urls = []
@@ -2764,22 +2941,22 @@ def render_submission_detail_page(conn, submission_id):
                                 (_json.dumps(final_image_urls), final_video_url, submission_id),
                             )
                         conn.commit()
-                    st.success("Đã cập nhật ảnh/video. / Media updated.")
+                    st.success("Media updated.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Không tải lên được: {e}")
+                    st.error(f"Could not upload: {e}")
 
     st.markdown("---")
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         try:
             st.download_button(
-                "⬇️ Tải Word / Download Word", data=export_submission_word(sub),
+                "Download Word", data=export_submission_word(sub),
                 file_name=f"Report_{sub['sales_order_no']}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
         except Exception as e:
-            st.error(f"Không tạo được Word: {e}")
+            st.error(f"Could not create Word file: {e}")
     with dl_col2:
         try:
             st.download_button(
@@ -2955,9 +3132,20 @@ def kind_badge_html(kind):
     return render_badge(kind, bg, color, border)
 
 
+STATUS_BADGE_DISPLAY_LABELS = {
+    "Thiếu Customer": "Missing Customer",
+    "Thiếu Client": "Missing Client",
+    "Thiếu Replacement Cost": "Missing Cost",
+    "Thiếu xác minh CAPA": "CAPA Not Verified",
+    "Closed": "Closed",
+    "Chưa hoàn thành": "Not Closed",
+}
+
+
 def status_badge_html(status):
     bg, color, border = STATUS_BADGE_STYLE.get(status, ("#f1efe8", "#2c2c2a", "#5f5e5a"))
-    return render_badge(status, bg, color, border)
+    display_text = STATUS_BADGE_DISPLAY_LABELS.get(status, status)
+    return render_badge(display_text, bg, color, border)
 
 
 SECTION_COLOR_STYLE = {
@@ -3018,9 +3206,9 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
     uid = f"fc_zoom_{_zoom_img_counter[0]}"
     caption_html = (
         f'<div style="font-size:12px;color:#73726c;margin-top:4px;">{caption} '
-        f'<span style="opacity:0.7;">(bấm để phóng to / click to zoom)</span></div>'
+        f'<span style="opacity:0.7;">(click to zoom)</span></div>'
         if caption else
-        '<div style="font-size:12px;color:#73726c;margin-top:4px;opacity:0.7;">(bấm để phóng to / click to zoom)</div>'
+        '<div style="font-size:12px;color:#73726c;margin-top:4px;opacity:0.7;">(click to zoom)</div>'
     )
     st.markdown(
         f"""
@@ -3051,8 +3239,7 @@ def render_paste_zone(target_label_substring, height=100):
     components.html(
         f"""
         <p style="margin:0 0 6px;font-size:13px;color:#73726c;font-family:-apple-system,sans-serif;">
-            📋 Bấm vào ô bên dưới rồi nhấn <b>Ctrl+V</b> để dán ảnh vừa chụp (vd: Windows+Shift+S)
-            <br>Click the box below, then press <b>Ctrl+V</b> to paste a screenshot (e.g. Win+Shift+S)
+            📋 Click the box below, then press <b>Ctrl+V</b> to paste a screenshot (e.g. Win+Shift+S)
         </p>
         <div id="fc-paste-zone" contenteditable="true" spellcheck="false" style="
             border: 1.5px dashed #9c9a92; border-radius: 8px; padding: 10px 14px;
@@ -3168,16 +3355,13 @@ try:
     conn = ensure_connection()
 except Exception as e:
     st.error(
-        "⚠️ Không thể kết nối tới cơ sở dữ liệu. Có thể do mạng bị gián đoạn, hoặc Supabase project "
-        "đang tạm dừng (Free tier tự pause sau ~1 tuần không hoạt động — kiểm tra tại "
-        "supabase.com/dashboard). Vui lòng kiểm tra rồi bấm thử lại bên dưới.\n\n"
         "⚠️ Could not connect to the database. This may be a network issue, or the Supabase project "
         "may be paused (Free tier auto-pauses after ~1 week of inactivity — check at "
         "supabase.com/dashboard). Please check and click retry below."
     )
-    with st.expander("🔧 Chi tiết kỹ thuật / Technical details"):
+    with st.expander("Technical details"):
         st.code(str(e))
-    if st.button("🔄 Thử lại / Retry"):
+    if st.button("Retry"):
         st.rerun()
     st.stop()
 
@@ -3224,17 +3408,17 @@ with st.sidebar:
     if st.button("📊  Dashboard", key="nav_dashboard", use_container_width=True):
         st.session_state.current_page = "dashboard"
         st.rerun()
-    if st.button("💬  Hỏi AI", key="nav_ask", use_container_width=True):
+    if st.button("💬  Ask AI", key="nav_ask", use_container_width=True):
         st.session_state.current_page = "ask_ai"
         st.rerun()
     with st.expander("More"):
-        if st.button("✅ Duyệt Taxonomy", key="nav_taxonomy", use_container_width=True):
+        if st.button("✅ Review Taxonomy", key="nav_taxonomy", use_container_width=True):
             st.session_state.current_page = "taxonomy"
             st.rerun()
-        if st.button("📝 Complaint mới (thủ công)", key="nav_new_complaint", use_container_width=True):
+        if st.button("📝 New Complaint (Manual)", key="nav_new_complaint", use_container_width=True):
             st.session_state.current_page = "new_complaint"
             st.rerun()
-        if st.button("🗄️ Truy xuất dữ liệu", key="nav_data_lookup", use_container_width=True):
+        if st.button("🗄️ Data Lookup", key="nav_data_lookup", use_container_width=True):
             st.session_state.current_page = "data_lookup"
             st.rerun()
 
@@ -3246,70 +3430,65 @@ page = st.session_state.current_page
 if page == "taxonomy":
     conn = ensure_connection()
     tab_banner(
-        "🔍", "Duyệt Taxonomy / Review Taxonomy",
-        "Xem xét và duyệt các đề xuất Defect / Root Cause / CAPA mới do AI phát hiện. "
-        "/ Review and approve new Defect / Root Cause / CAPA suggestions detected by AI.",
+        "🔍", "Review Taxonomy",
+        "Review and approve new Defect / Root Cause / CAPA suggestions detected by AI.",
         "amber",
     )
 
     reviewers = fetch_reviewers(conn)
     if not reviewers:
-        st.error("Chưa có reviewer nào trong bảng 'reviewer'. Thêm ít nhất 1 người trước khi dùng. "
-                  "/ No reviewer found in the 'reviewer' table. Add at least one before using this.")
+        st.error("No reviewer found in the 'reviewer' table. Add at least one before using this.")
         st.stop()
 
     reviewer_names = {name: rid for rid, name in reviewers}
     selected_name = st.selectbox(
-        "Bạn là ai? / Who are you?",
+        "Who are you?",
         list(reviewer_names.keys()),
-        help="Chọn tên để ghi nhận người duyệt. / Select your name for the review record.",
+        help="Select your name for the review record.",
     )
     reviewer_id = reviewer_names[selected_name]
 
-    if st.button("🔄 Làm mới / Refresh"):
+    if st.button("Refresh"):
         st.rerun()
 
-    with st.expander("🖼️ Gắn/thay ảnh mẫu cho mã Defect có sẵn / Attach reference images for an existing Defect code"):
+    with st.expander("Attach reference images for an existing Defect code"):
         st.caption(
-            "Dùng chỗ này cho các mã Defect đã có sẵn từ trước (chưa từng gắn ảnh lúc duyệt mã mới). "
-            "Mỗi mã tối đa 3 ảnh. / Use this for existing Defect codes that never got an image when they "
-            "were first approved. Each code holds up to 3 images."
+            "Use this for existing Defect codes that never got an image when they were first approved. Each code holds up to 3 images."
         )
         defect_codes_for_image = fetch_existing_codes(conn, "Defect")
-        defect_image_labels = ["-- chọn mã / select code --"] + [f"{c} — {n}" for c, n in defect_codes_for_image]
-        picked_defect_label = st.selectbox("Mã Defect / Defect code", defect_image_labels, key="picked_defect_for_image")
-        if picked_defect_label != "-- chọn mã / select code --":
+        defect_image_labels = ["select code --"] + [f"{c} — {n}" for c, n in defect_codes_for_image]
+        picked_defect_label = st.selectbox("Defect code", defect_image_labels, key="picked_defect_for_image")
+        if picked_defect_label != "select code --":
             picked_defect_code = picked_defect_label.split(" — ")[0]
             existing_ref_imgs = fetch_defect_reference_images(conn, picked_defect_code)
             if existing_ref_imgs:
-                st.caption(f"Đang có {len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES} ảnh / {len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES} images")
+                st.caption(f"Currently have {len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES}{len(existing_ref_imgs)}/{MAX_DEFECT_REFERENCE_IMAGES} images")
                 img_cols = st.columns(len(existing_ref_imgs))
                 for i, (col, img_b64) in enumerate(zip(img_cols, existing_ref_imgs)):
                     with col:
-                        render_zoomable_image(img_b64, width=150, caption=f"Ảnh {i + 1} / Image {i + 1}")
-                        if st.button("🗑️ Xóa / Delete", key=f"del_ref_img_{picked_defect_code}_{i}"):
+                        render_zoomable_image(img_b64, width=150, caption=f"Image {i + 1} / Image {i + 1}")
+                        if st.button("Delete", key=f"del_ref_img_{picked_defect_code}_{i}"):
                             remove_defect_reference_image(conn, picked_defect_code, i)
                             st.rerun()
             slots_left = MAX_DEFECT_REFERENCE_IMAGES - len(existing_ref_imgs)
             if slots_left > 0:
                 new_ref_img_files = st.file_uploader(
-                    f"Thêm ảnh mẫu (còn {slots_left} chỗ trống) / Add reference images ({slots_left} slot(s) left)",
+                    f"Add reference images (remaining {slots_left}Add reference images ({slots_left} slot(s) left)",
                     type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"new_ref_img_{picked_defect_code}",
                 )
-                if new_ref_img_files and st.button("💾 Lưu ảnh / Save images", key=f"btn_save_ref_img_{picked_defect_code}"):
+                if new_ref_img_files and st.button("Save images", key=f"btn_save_ref_img_{picked_defect_code}"):
                     new_b64_list = [base64.b64encode(f.getvalue()).decode("utf-8") for f in new_ref_img_files]
                     _, dropped = add_defect_reference_images(conn, picked_defect_code, new_b64_list)
                     if dropped:
                         st.warning(
-                            f"Đã lưu, nhưng vượt quá giới hạn {MAX_DEFECT_REFERENCE_IMAGES} ảnh nên {dropped} ảnh cũ "
-                            f"nhất đã bị loại bớt. / Saved, but {dropped} oldest image(s) were dropped to stay within "
+                            f"Saved, but exceeded the limit of {MAX_DEFECT_REFERENCE_IMAGES} images, so {dropped}Saved, but {dropped} oldest image(s) were dropped to stay within "
                             f"the {MAX_DEFECT_REFERENCE_IMAGES}-image limit."
                         )
                     else:
-                        st.success(f"Đã lưu ảnh mẫu cho {picked_defect_code}. / Reference images saved for {picked_defect_code}.")
+                        st.success(f"Reference images saved for {picked_defect_code}.")
                     st.rerun()
             else:
-                st.caption(f"Đã đủ {MAX_DEFECT_REFERENCE_IMAGES} ảnh — xóa bớt ảnh cũ nếu muốn thêm ảnh mới. / Already at the {MAX_DEFECT_REFERENCE_IMAGES}-image limit — delete one to add a new one.")
+                st.caption(f"Already have {MAX_DEFECT_REFERENCE_IMAGES}Already at the {MAX_DEFECT_REFERENCE_IMAGES}-image limit — delete one to add a new one.")
 
     @st.fragment
     def render_pending_queue():
@@ -3319,14 +3498,14 @@ if page == "taxonomy":
         # báo reviewer NGAY lúc NCC nộp, không cần cơ chế "kiểm tra khi mở tab" này nữa.
         card_color = "amber" if pending else "teal"
         st.markdown(
-            stat_card_html("Đang chờ duyệt / Pending", len(pending), card_color),
+            stat_card_html("Pending", len(pending), card_color),
             unsafe_allow_html=True,
         )
         st.write("")
 
         if not pending:
             st.success(
-                "Không có đề xuất nào đang chờ — hàng đợi trống. / No suggestions pending — queue is empty."
+                "No suggestions pending — queue is empty."
             )
 
         for row in pending:
@@ -3338,7 +3517,7 @@ if page == "taxonomy":
                     f'{kind_badge_html(kind)}&nbsp;&nbsp;<span style="font-size:1.15rem;font-weight:600;">{suggested_name}</span>',
                     unsafe_allow_html=True,
                 )
-                st.write(f"**Lý do AI đưa ra / AI reasoning:** {reasoning}")
+                st.write(f"AI reasoning:** {reasoning}")
                 meta_bits = [f"📄 {so_po or '—'}", f"📅 {date_opened or '?'}"]
                 if closest_code:
                     meta_bits.append(f"🔍 {closest_code}")
@@ -3355,41 +3534,41 @@ if page == "taxonomy":
                             with col:
                                 render_zoomable_image(
                                     img_b64, width=180,
-                                    caption=f"{closest_code} #{i + 1} (so sánh / compare)" if len(closest_ref_imgs) > 1 else f"Ảnh tham chiếu {closest_code} / Reference image",
+                                    caption=f"{closest_code} #{i + 1}" if len(closest_ref_imgs) > 1 else f"Reference image {closest_code}",
                                 )
 
                 existing_codes = fetch_existing_codes(conn_f, kind)
-                code_options = ["-- chọn / select --"] + [f"{c} — {n}" for c, n in existing_codes]
+                code_options = ["select --"] + [f"{c} — {n}" for c, n in existing_codes]
 
                 action = st.radio(
-                    "Quyết định / Decision",
-                    ["Khớp với mã có sẵn / Match existing code",
-                     "Đây là loại mới — thêm mã mới / This is new — add new code",
-                     "Từ chối / Reject"],
+                    "Decision",
+                    ["Match existing code",
+                     "This is new — add new code",
+                     "Reject"],
                     key=f"action_{sid}", horizontal=True
                 )
 
-                if action == "Khớp với mã có sẵn / Match existing code":
-                    chosen = st.selectbox("Chọn mã có sẵn đúng nhất / Select the best matching code",
+                if action == "Match existing code":
+                    chosen = st.selectbox("Select the best matching code",
                                            code_options, key=f"match_{sid}")
-                    if st.button("✅ Xác nhận khớp / Confirm match", key=f"btn_match_{sid}"):
-                        if chosen == "-- chọn / select --":
-                            st.warning("Bạn chưa chọn mã. / You haven't selected a code yet.")
+                    if st.button("Confirm match", key=f"btn_match_{sid}"):
+                        if chosen == "select --":
+                            st.warning("You haven't selected a code yet.")
                         else:
                             code_only = chosen.split(" — ")[0]
                             approve_match_existing(conn_f, sid, code_only, reviewer_id, complaint_id, kind, responsible_party)
                             st.session_state["needs_extra_refresh"] = True
                             st.rerun()
 
-                elif action == "Đây là loại mới — thêm mã mới / This is new — add new code":
+                elif action == "This is new — add new code":
                     prefix_map = {"Defect": "DEF", "Root Cause": "RC", "CAPA": "CAPA"}
                     suggested_code = suggest_next_code([c for c, _ in existing_codes], prefix_map[kind])
                     new_code = st.text_input(
-                        "Mã mới (gợi ý sẵn mã tiếp theo, có thể sửa lại) / New code (next code suggested, editable)",
+                        "New code (next code suggested, editable)",
                         value=suggested_code, key=f"newcode_{sid}",
                     )
-                    name_final = st.text_input("Tên / Name", value=suggested_name, key=f"name_{sid}")
-                    desc_final = st.text_area("Mô tả / Description", value=reasoning, key=f"desc_{sid}")
+                    name_final = st.text_input("Name", value=suggested_name, key=f"name_{sid}")
+                    desc_final = st.text_area("Description", value=reasoning, key=f"desc_{sid}")
 
                     extra = {}
                     new_defect_ref_images = None
@@ -3397,19 +3576,18 @@ if page == "taxonomy":
                         extra["product_group"] = st.selectbox("Product Group", PRODUCT_GROUPS, key=f"pg_{sid}")
                         extra["severity"] = st.selectbox("Default Severity", SEVERITIES, key=f"sev_{sid}")
                         new_defect_ref_images = st.file_uploader(
-                            "Ảnh mẫu cho mã Defect mới, tối đa 3 (tùy chọn) / Reference images for this new Defect code, up to 3 (optional)",
+                            "Reference images for this new Defect code, up to 3 (optional)",
                             type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"refimg_{sid}",
-                            help="Hiện ra mỗi khi mã này được khớp/gợi ý ở Hỏi AI và Duyệt Taxonomy. "
-                                 "/ Shown whenever this code is matched/suggested in Ask AI and Review Taxonomy.",
+                            help="Shown whenever this code is matched/suggested in Ask AI and Review Taxonomy.",
                         )
                     elif kind == "Root Cause":
                         extra["category"] = st.selectbox("Category (6M+)", RC_CATEGORIES, key=f"cat_{sid}")
                     elif kind == "CAPA":
                         extra["capa_type"] = st.selectbox("CAPA Type", CAPA_TYPES, key=f"capatype_{sid}")
 
-                    if st.button("✅ Thêm mã mới & Duyệt / Add new code & Approve", key=f"btn_new_{sid}"):
+                    if st.button("Add new code & Approve", key=f"btn_new_{sid}"):
                         if not new_code.strip():
-                            st.warning("Bạn chưa nhập mã mới. / You haven't entered a new code.")
+                            st.warning("You haven't entered a new code.")
                         else:
                             approve_new_code(conn_f, sid, new_code.strip(), name_final, desc_final,
                                               reviewer_id, complaint_id, kind, extra, responsible_party)
@@ -3420,7 +3598,7 @@ if page == "taxonomy":
                             st.rerun()
 
                 else:  # Từ chối / Reject
-                    if st.button("❌ Từ chối / Reject", key=f"btn_reject_{sid}"):
+                    if st.button("Reject", key=f"btn_reject_{sid}"):
                         reject(conn_f, sid, reviewer_id)
                         st.rerun()
 
@@ -3432,35 +3610,32 @@ if page == "taxonomy":
 if page == "data_lookup":
     conn = ensure_connection()
     tab_banner(
-        "📊", "Truy xuất dữ liệu / Data Lookup",
-        "Tra cứu, xuất báo cáo Word, và soạn email liên quan tới complaint đã có. "
-        "/ Look up data, export Word reports, and draft emails for existing complaints.",
+        "📊", "Data Lookup",
+        "Look up data, export Word reports, and draft emails for existing complaints.",
         "blue",
     )
     if st.session_state.pop("needs_extra_refresh", False):
         st.rerun()
-    if st.button("🔄 Làm mới / Refresh", key="btn_refresh_data_tab"):
+    if st.button("Refresh", key="btn_refresh_data_tab"):
         st.rerun()
 
     orphaned = find_orphaned_submissions(conn)
     if orphaned:
         with zone_card("coral"):
             section_header(
-                "🛠️", f"Phát hiện {len(orphaned)} báo cáo NCC bị thiếu complaint tương ứng — cần khôi phục",
+                "🛠️", f"Found {len(orphaned)} supplier report(s) missing a matching complaint — need repair",
                 "coral",
             )
             st.caption(
-                "Do lỗi kỹ thuật trước đây (đã sửa), 1 số báo cáo NCC nộp qua link chung không tạo được "
-                "complaint tương ứng. Bấm nút dưới để tự động khôi phục lại đầy đủ (kể cả đề xuất "
-                "Defect/Root Cause/CAPA cho reviewer duyệt)."
+                "Due to a previous technical issue (now fixed), some supplier reports submitted via the shared link failed to create a matching complaint. Click the button below to automatically restore them (including Defect/Root Cause/CAPA suggestions for the reviewer)."
             )
-            if st.button(f"🛠️ Khôi phục {len(orphaned)} báo cáo bị thiếu / Repair {len(orphaned)} missing complaints"):
+            if st.button(f"🛠️ Repair {len(orphaned)}Repair {len(orphaned)} missing complaints"):
                 ai_client_repair = get_ai_client()
                 progress = st.progress(0.0)
                 for i, row in enumerate(orphaned):
                     repair_orphaned_submission(conn, ai_client_repair, *row)
                     progress.progress((i + 1) / len(orphaned))
-                st.success(f"Đã khôi phục {len(orphaned)} complaint. / Repaired {len(orphaned)} complaints.")
+                st.success(f"Repaired {len(orphaned)} complaint. / Repaired {len(orphaned)} complaints.")
                 st.rerun()
 
     with conn.cursor() as cur:
@@ -3471,26 +3646,26 @@ if page == "data_lookup":
     closed_count = status_counts.get("Closed", 0)
     stat_col1, stat_col2, stat_col3 = st.columns(3)
     with stat_col1:
-        st.markdown(stat_card_html("Tổng complaint / Total", total_complaints, "gray"), unsafe_allow_html=True)
+        st.markdown(stat_card_html("Total", total_complaints, "gray"), unsafe_allow_html=True)
     with stat_col2:
-        st.markdown(stat_card_html("Chưa đóng hồ sơ / Not closed", not_closed_count, "amber"), unsafe_allow_html=True)
+        st.markdown(stat_card_html("Not closed", not_closed_count, "amber"), unsafe_allow_html=True)
     with stat_col3:
-        st.markdown(stat_card_html("Đã đóng hồ sơ / Closed", closed_count, "teal"), unsafe_allow_html=True)
+        st.markdown(stat_card_html("Closed", closed_count, "teal"), unsafe_allow_html=True)
 
     with zone_card("blue"):
-        section_header("📊", "4 câu hỏi mục tiêu / Target questions", "blue")
-        chosen_q = st.selectbox("Chọn câu hỏi muốn xem / Choose a question to view", list(TARGET_QUERIES.keys()))
+        section_header("📊", "Target questions", "blue")
+        chosen_q = st.selectbox("Choose a question to view", list(TARGET_QUERIES.keys()))
         df = pd.read_sql(TARGET_QUERIES[chosen_q], conn)
         if df.empty:
             with conn.cursor() as cur:
                 cur.execute("select count(*) from complaint where defect_code is null or root_cause_code is null;")
                 n_pending_codes = cur.fetchone()[0]
             hint = ""
-            if "6 tháng" in chosen_q or "6 months" in chosen_q.lower():
-                hint = " Câu hỏi này chỉ tính complaint trong 6 tháng gần nhất — kiểm tra lại Record Date."
+            if "6 months" in chosen_q or "6 months" in chosen_q.lower():
+                hint = " This question only counts complaints from the last 6 months — check the Record Date."
             elif chosen_q.startswith(("Q2", "Q3", "Q4")) and n_pending_codes:
-                hint = f" Hiện có {n_pending_codes} complaint còn thiếu Defect/Root Cause đã duyệt — sang Duyệt Taxonomy để xử lý trước."
-            st.info(f"Chưa có dữ liệu phù hợp với đúng bộ lọc của câu hỏi này.{hint}")
+                hint = f" Currently there are {n_pending_codes} complaint(s) missing an approved Defect/Root Cause — go to Review Taxonomy to process first."
+            st.info(f"No data matches the filter for this question.{hint}")
         else:
             df.index = range(1, len(df) + 1)
             st.dataframe(df, use_container_width=True)
@@ -3505,7 +3680,7 @@ if page == "data_lookup":
                     max_len = max(len(str(c.value)) if c.value is not None else 0 for c in col_cells)
                     ws.column_dimensions[col_cells[0].column_letter].width = max_len + 4
             st.download_button(
-                "⬇️ Xuất Excel / Export Excel", data=excel_buf.getvalue(),
+                "Export Excel", data=excel_buf.getvalue(),
                 file_name="truy_xuat_du_lieu.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -3513,12 +3688,12 @@ if page == "data_lookup":
             if df.shape[1] == 2 and df.shape[0] > 0:
                 st.bar_chart(df.set_index(df.columns[0]))
                 st.download_button(
-                    "⬇️ Xuất biểu đồ (PNG) / Export chart (PNG)", data=export_chart_png(df),
+                    "Export chart (PNG)", data=export_chart_png(df),
                     file_name="bieu_do.png", mime="image/png",
                 )
 
     with zone_card("coral"):
-        section_header("📋", "Xuất báo cáo đầy đủ cho 1 complaint / Export full report for a complaint", "coral")
+        section_header("📋", "Export full report for a complaint", "coral")
         with conn.cursor() as cur:
             cur.execute("""
                 select complaint_id, so_po, date_opened, notes
@@ -3527,7 +3702,7 @@ if page == "data_lookup":
             recent_complaints = cur.fetchall()
 
         if not recent_complaints:
-            st.info("Chưa có complaint nào trong hệ thống. / No complaints in the system yet.")
+            st.info("No complaints in the system yet.")
         else:
             complaint_id_to_row = {row[0]: row for row in recent_complaints}
             valid_ids = [row[0] for row in recent_complaints]
@@ -3549,10 +3724,10 @@ if page == "data_lookup":
             default_index = valid_ids.index(st.session_state.sticky_picked_complaint_id)
 
             picked_id = st.selectbox(
-                "Chọn complaint cần xuất báo cáo / Select complaint to export",
+                "Select complaint to export",
                 options=valid_ids,
                 format_func=lambda cid: (
-                    f"{complaint_id_to_row[cid][1] or '(không SO/PO)'} — "
+                    f"{complaint_id_to_row[cid][1] or '(no SO/PO)'} — "
                     f"{complaint_id_to_row[cid][2].strftime('%d/%m/%Y') if complaint_id_to_row[cid][2] else '?'} — "
                     f"{truncate_at_word(complaint_id_to_row[cid][3], 120)}"
                 ),
@@ -3567,7 +3742,7 @@ if page == "data_lookup":
 
             try:
                 st.download_button(
-                    "⬇️ Word (bản mới nhất) / Word (latest version)",
+                    "Word (latest version)",
                     data=export_word_report(
                         full_report,
                         supplier_signature_name=supplier_sig_name,
@@ -3578,52 +3753,50 @@ if page == "data_lookup":
                     key="full_word",
                 )
             except Exception as e:
-                st.error(f"Không tạo được Word / Could not create Word file: {e}")
+                st.error(f"Could not create Word file: {e}")
 
             with st.expander(
-                "📷 Gắn/thay ảnh minh họa lỗi cho complaint này / Attach or replace this complaint's defect photo"
+                "Attach or replace this complaint's defect photo"
             ):
-                if full_report.get("Ảnh lỗi"):
-                    render_zoomable_image(full_report["Ảnh lỗi"], width=220, caption="Ảnh hiện tại / Current photo")
+                if full_report.get("Defect Photo"):
+                    render_zoomable_image(full_report["Defect Photo"], width=220, caption="Current photo")
                 new_defect_photo = st.file_uploader(
-                    "Ảnh minh họa lỗi / Defect photo", type=["png", "jpg", "jpeg"],
+                    "Defect photo", type=["png", "jpg", "jpeg"],
                     key=f"attach_defect_photo_{picked_id}",
                 )
-                if new_defect_photo is not None and st.button("💾 Lưu ảnh / Save photo", key=f"btn_save_defect_photo_{picked_id}"):
+                if new_defect_photo is not None and st.button("Save photo", key=f"btn_save_defect_photo_{picked_id}"):
                     photo_b64 = base64.b64encode(new_defect_photo.getvalue()).decode("utf-8")
                     with conn.cursor() as cur:
                         cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64, picked_id))
                     conn.commit()
-                    st.success("Đã lưu ảnh — bấm tải Word lại để có bản mới nhất. / Photo saved — re-download the Word file to get the latest version.")
+                    st.success("Photo saved — re-download the Word file to get the latest version.")
                     st.rerun()
 
             has_root_cause = bool(full_report.get("Root cause"))
             has_capa = bool(full_report.get("CAPA"))
 
             st.markdown("---")
-            with st.expander("➕ Thêm CAPA action cho complaint này / Add a CAPA action to this complaint"):
+            with st.expander("Add a CAPA action to this complaint"):
                 capa_add_result = st.session_state.pop("capa_add_result", None)
                 if capa_add_result and capa_add_result.get("complaint_id") == picked_id:
                     st.success(capa_add_result["message"])
                 capa_codes_add = fetch_existing_codes(conn, "CAPA")
-                capa_labels_add = ["-- chọn mã có sẵn / select existing code --"] + [f"{c} — {n}" for c, n in capa_codes_add]
+                capa_labels_add = ["select existing code --"] + [f"{c} — {n}" for c, n in capa_codes_add]
                 with st.form(f"add_capa_form_{picked_id}"):
-                    capa_choice_add = st.selectbox("CAPA có sẵn / Existing CAPA", capa_labels_add)
+                    capa_choice_add = st.selectbox("Existing CAPA", capa_labels_add)
                     new_capa_text_add = st.text_input(
-                        "...hoặc mô tả CAPA MỚI (nếu chưa có mã phù hợp — sẽ gửi vào hàng đợi chờ duyệt) "
-                        "/ ...or describe a NEW CAPA (if no existing code fits — will be sent to the approval queue)"
+                        "...or describe a NEW CAPA (if no existing code fits — will be sent to the approval queue)"
                     )
-                    responsible_add = st.text_input("Người phụ trách / Responsible person")
-                    date_proposed_add = st.date_input("Ngày đề xuất CAPA / CAPA proposed date")
-                    submitted_capa_add = st.form_submit_button("💾 Thêm CAPA / Add CAPA")
+                    responsible_add = st.text_input("Responsible person")
+                    date_proposed_add = st.date_input("CAPA proposed date")
+                    submitted_capa_add = st.form_submit_button("Add CAPA")
                     if submitted_capa_add:
-                        if capa_choice_add != "-- chọn mã có sẵn / select existing code --":
+                        if capa_choice_add != "select existing code --":
                             code_only_add = capa_choice_add.split(" — ")[0]
                             add_capa_action_to_complaint(conn, picked_id, code_only_add, date_proposed_add, responsible_add or None)
                             st.session_state["capa_add_result"] = {
                                 "complaint_id": picked_id,
-                                "message": f"✅ Đã thêm CAPA **{code_only_add}** cho complaint này — đã có hiệu lực ngay, xem ở danh sách bên dưới. "
-                                           f"/ Added CAPA **{code_only_add}** — now in effect, see the list below.",
+                                "message": f"✅ Added CAPA **{code_only_add}Added CAPA **{code_only_add}** — now in effect, see the list below.",
                             }
                             st.rerun()
                         elif new_capa_text_add.strip():
@@ -3633,9 +3806,9 @@ if page == "data_lookup":
                             conn = ensure_connection()
                             closest = check_result.get("closest_existing_code") or check_result.get("matched_code")
                             note = (
-                                f"CAPA được thêm sau (không phải lúc nhập complaint) — nhân viên tự mô tả, chưa có mã phù hợp. "
-                                f"Người phụ trách dự kiến: {responsible_add or '(chưa rõ)'}. "
-                                f"AI kiểm tra chéo: {check_result.get('reasoning', '(không có ghi chú)')}"
+                                f"CAPA added later (not at complaint entry time) — manually described by staff, no matching code yet. "
+                                f"Expected responsible person: {responsible_add or '(unknown)'}. "
+                                f"AI cross-check: {check_result.get('reasoning', '(no notes)')}"
                             )
                             with conn.cursor() as cur:
                                 cur.execute(
@@ -3647,86 +3820,79 @@ if page == "data_lookup":
                             conn.commit()
                             st.session_state["capa_add_result"] = {
                                 "complaint_id": picked_id,
-                                "message": "📥 Đã gửi CAPA mới vào **hàng đợi chờ duyệt** — vào tab 'Duyệt Taxonomy' để duyệt, "
-                                           "sau đó nó mới thật sự áp dụng cho complaint này. / Sent the new CAPA to the "
-                                           "**approval queue** — go to 'Review Taxonomy' to approve it before it applies.",
+                                "message": "Sent the new CAPA to the **approval queue** — go to 'Review Taxonomy' to approve it before it applies.",
                             }
                             st.rerun()
                         else:
-                            st.warning("Bạn chưa chọn mã có sẵn hoặc nhập mô tả CAPA mới. / You haven't selected an existing "
-                                       "code or entered a new CAPA description.")
+                            st.warning("You haven't selected an existing code or entered a new CAPA description.")
 
             st.markdown("---")
-            section_header("🔄", "Trạng thái xử lý complaint / Complaint status", "gray")
+            section_header("🔄", "Complaint status", "gray")
             capa_rows_status = fetch_capa_actions_for_complaint(conn, picked_id)
 
             if not capa_rows_status:
-                st.caption("⏳ Chưa có CAPA action nào — cần thêm trước khi chuyển sang Resolved/Closed. / No CAPA action yet — add one before moving to Resolved/Closed.")
+                st.caption("No CAPA action yet — add one before moving to Resolved/Closed.")
             else:
                 for capa_action_id, capa_code, capa_action_name, date_proposed, date_implemented, verif, resp in capa_rows_status:
                     with st.container(border=True):
-                        st.write(f"**{capa_code} — {capa_action_name}** (phụ trách / responsible: {resp or '(chưa rõ / unknown)'})")
+                        st.write(f"**{capa_code} — {capa_action_name}responsible: {resp or 'unknown)'})")
                         st.caption(
-                            f"Đề xuất ngày / Proposed on: {date_proposed.strftime('%d/%m/%Y') if date_proposed else '?'} "
-                            f"| Xác minh hiệu quả / Effectiveness verification: {verif or 'Pending'}"
+                            f"Proposed on: {date_proposed.strftime('%d/%m/%Y') if date_proposed else '?'}Effectiveness verification: {verif or 'Pending'}"
                         )
                         if date_implemented:
-                            st.success(f"✅ Đã thực hiện ngày / Implemented on {date_implemented.strftime('%d/%m/%Y')}")
+                            st.success(f"Implemented on {date_implemented.strftime('%d/%m/%Y')}")
                         else:
                             impl_date = st.date_input(
-                                "Đánh dấu đã thực hiện vào ngày / Mark implemented on date", key=f"impl_date_{capa_action_id}"
+                                "Mark implemented on date", key=f"impl_date_{capa_action_id}"
                             )
-                            if st.button("✅ Đánh dấu đã thực hiện / Mark implemented", key=f"btn_impl_{capa_action_id}"):
+                            if st.button("Mark implemented", key=f"btn_impl_{capa_action_id}"):
                                 mark_capa_implemented(conn, capa_action_id, impl_date)
                                 compute_and_update_complaint_status(conn, picked_id)
                                 st.rerun()
 
                         confirm_del = st.checkbox(
-                            "Xác nhận xóa CAPA này (không thể hoàn tác) / Confirm delete this CAPA (cannot be undone)",
+                            "Confirm delete this CAPA (cannot be undone)",
                             key=f"confirmdel_{capa_action_id}",
                         )
-                        if st.button("🗑️ Xóa CAPA action / Delete CAPA action", key=f"btn_delcapa_{capa_action_id}", disabled=not confirm_del):
+                        if st.button("Delete CAPA action", key=f"btn_delcapa_{capa_action_id}", disabled=not confirm_del):
                             delete_capa_action(conn, capa_action_id)
                             compute_and_update_complaint_status(conn, picked_id)
-                            st.success("Đã xóa CAPA action. / CAPA action deleted.")
+                            st.success("CAPA action deleted.")
                             st.rerun()
 
             missing_tags_now = compute_and_update_complaint_status(conn, picked_id)
             simple_status = "Closed" if not missing_tags_now else "Chưa hoàn thành"
             st.markdown(
-                f"Trạng thái: {status_badge_html(simple_status)}",
+                f"Status: {status_badge_html(simple_status)}",
                 unsafe_allow_html=True,
             )
 
         st.markdown("---")
-    with st.expander("✅ CAPA đang chờ xác minh hiệu quả / CAPA pending effectiveness verification"):
+    with st.expander("CAPA pending effectiveness verification"):
         pending_verifications = fetch_capa_pending_verification(conn)
         if not pending_verifications:
-            st.info("Không có CAPA nào đang chờ xác minh. / No CAPA pending verification.")
+            st.info("No CAPA pending verification.")
         else:
             for (capa_action_id, cid, so_po_v, date_opened_v, capa_code, capa_action_name,
                  eff_window, date_implemented_v, resp_v) in pending_verifications:
                 with st.container(border=True):
                     st.write(f"**{capa_code} — {capa_action_name}**")
                     st.caption(
-                        f"Complaint: {so_po_v or '(không SO/PO)'} — mở ngày / opened {date_opened_v.strftime('%d/%m/%Y') if date_opened_v else '?'} "
-                        f"| Đã thực hiện / Implemented: {date_implemented_v.strftime('%d/%m/%Y')} "
-                        f"| Phụ trách / Responsible: {resp_v or '(chưa rõ / unknown)'} "
-                        f"| Thời gian theo dõi gợi ý / Suggested monitoring window: {eff_window or '(chưa có / none)'}"
+                        f"Complaint: {so_po_v or '(no SO/PO)'}opened {date_opened_v.strftime('%d/%m/%Y') if date_opened_v else '?'}Implemented: {date_implemented_v.strftime('%d/%m/%Y')}Responsible: {resp_v or 'unknown)'}Suggested monitoring window: {eff_window or 'none)'}"
                     )
                     col_v1, col_v2, col_v3 = st.columns([2, 2, 1])
                     with col_v1:
                         verif_choice = st.selectbox(
-                            "Kết quả xác minh / Verification result", VERIFICATION_RESULTS, key=f"verifres_{capa_action_id}"
+                            "Verification result", VERIFICATION_RESULTS, key=f"verifres_{capa_action_id}"
                         )
                     with col_v2:
-                        verif_date = st.date_input("Ngày xác minh / Verification date", key=f"verifdate_{capa_action_id}")
+                        verif_date = st.date_input("Verification date", key=f"verifdate_{capa_action_id}")
                     with col_v3:
                         st.write("")
                         st.write("")
-                        if st.button("💾 Lưu kết quả / Save result", key=f"btn_verif_{capa_action_id}"):
+                        if st.button("Save result", key=f"btn_verif_{capa_action_id}"):
                             submit_capa_verification(conn, capa_action_id, verif_choice, verif_date)
-                            st.success("Đã lưu kết quả xác minh. / Verification result saved.")
+                            st.success("Verification result saved.")
                             st.rerun()
 
 
@@ -3736,20 +3902,19 @@ if page == "data_lookup":
 if page == "ask_ai":
     conn = ensure_connection()
     tab_banner(
-        "💬", "Hỏi AI / Ask AI",
-        "Hỏi tự do về dữ liệu chất lượng — không giới hạn trong 4 câu hỏi mục tiêu. "
-        "/ Ask anything about the quality data — not limited to the 4 target questions.",
+        "💬", "Ask AI",
+        "Ask anything about the quality data — not limited to the 4 target questions.",
         "teal",
     )
     question = st.text_input(
-        "Câu hỏi của bạn / Your question",
-        placeholder="Ví dụ / Example: Root cause của lỗi túi polybag bị ẩm là gì?",
-        help="Hỏi bất kỳ điều gì — không giới hạn trong 4 câu hỏi mục tiêu. / Ask anything — not limited to the 4 target questions.",
+        "Your question",
+        placeholder="Example: What is the root cause of damp polybag defects?",
+        help="Ask anything — not limited to the 4 target questions.",
     )
 
-    if st.button("🔎 Hỏi AI / Ask AI") and question.strip():
+    if st.button("Ask AI") and question.strip():
         ai_client = get_ai_client()
-        with st.spinner("AI đang tra cứu... / AI is looking this up..."):
+        with st.spinner("AI is looking this up..."):
             try:
                 conn = ensure_connection()
                 taxonomy_context = fetch_taxonomy_context(conn)
@@ -3799,48 +3964,39 @@ if page == "ask_ai":
     if result:
         if result.get("error") == "unsafe_sql":
             st.error(
-                "AI tạo ra câu lệnh không an toàn (chứa từ khóa có thể chỉnh sửa dữ liệu) — đã chặn, không chạy. "
-                "/ AI generated an unsafe statement (contains a data-modifying keyword) — blocked, not executed."
+                "AI generated an unsafe statement (contains a data-modifying keyword) — blocked, not executed."
             )
             if result.get("sql"):
-                with st.expander("🔧 Xem câu SQL bị chặn (để báo lỗi nếu cần) / View the blocked SQL"):
+                with st.expander("View the blocked SQL"):
                     st.code(result["sql"], language="sql")
         elif result.get("error") == "not_a_question":
             st.info(
-                "Câu này giống **mô tả 1 sự cố mới** hơn là câu hỏi tra cứu, HOẶC AI trả lời sai định dạng mong đợi. "
-                "Tab 'Hỏi AI' chỉ dùng để **tra cứu (chỉ đọc)**. / This looks more like a **description of a new "
-                "issue** than a lookup question, OR the AI replied in an unexpected format. The 'Ask AI' tab is "
-                "for **read-only lookups** only."
+                "This looks more like a **description of a new issue** than a lookup question, OR the AI replied in an unexpected format. The 'Ask AI' tab is for **read-only lookups** only."
             )
             render_create_complaint_suggestion(conn, result.get("question", ""), "btn_goto_new_complaint")
             st.caption(
-                "💡 Nếu đây thực sự là câu hỏi tra cứu, thử hỏi lại cách khác. / If this is really a lookup "
-                "question, try rephrasing it."
+                "If this is really a lookup question, try rephrasing it."
             )
             if result.get("debug"):
-                with st.expander("🔧 Chi tiết kỹ thuật (để báo lỗi nếu cần) / Technical details (for bug reports)"):
+                with st.expander("Technical details (for bug reports)"):
                     st.code(result["debug"])
         elif result.get("error") == "sql_execution_error":
             st.error(
-                "AI đã sinh ra câu SQL nhưng chạy bị lỗi cú pháp/thực thi — có thể do câu hỏi phức tạp hoặc "
-                "AI tham chiếu sai tên cột/bảng. Bạn thử hỏi lại theo cách diễn đạt khác, hoặc chụp phần debug "
-                "bên dưới gửi lại để mình sửa. / AI generated SQL but it failed to run — possibly a complex "
-                "question or a wrong column/table reference. Try rephrasing, or share the debug details below."
+                "AI generated SQL but it failed to run — possibly a complex question or a wrong column/table reference. Try rephrasing, or share the debug details below."
             )
-            with st.expander("🔧 Chi tiết kỹ thuật (câu SQL lỗi + thông báo lỗi từ database) / Technical details (failed SQL + DB error)"):
+            with st.expander("Technical details (failed SQL + DB error)"):
                 st.code(result.get("sql", ""), language="sql")
                 st.caption(result.get("explanation", ""))
                 st.code(result.get("debug", ""))
                 if result.get("raw"):
                     st.caption(
-                        "Toàn bộ nội dung thô AI trả về (để kiểm tra có bị cắt cụt do hết token không): "
-                        "/ Full raw AI output (to check for truncation):"
+                        "Full raw AI output (to check for truncation):"
                     )
                     st.code(result["raw"])
         elif "error" in result:
-            st.error(f"Có lỗi xảy ra / An error occurred: {result['error']}")
+            st.error(f"An error occurred: {result['error']}")
         else:
-            with st.expander("Xem câu SQL AI đã dùng / View the SQL AI used"):
+            with st.expander("View the SQL AI used"):
                 st.code(result["sql"], language="sql")
                 st.caption(result["explanation"])
 
@@ -3856,7 +4012,7 @@ if page == "ask_ai":
                         with col:
                             render_zoomable_image(
                                 img_b64, width=220,
-                                caption=f"{matched_defect} #{i + 1}" if len(ref_imgs) > 1 else f"Ảnh tham chiếu {matched_defect} / Reference image",
+                                caption=f"{matched_defect} #{i + 1}" if len(ref_imgs) > 1 else f"Reference image {matched_defect} / Reference image",
                             )
 
             if not df_ans.empty:
@@ -3876,7 +4032,7 @@ if page == "ask_ai":
                         except Exception:
                             pass
 
-                st.markdown(f"### 🤖 Trả lời / Answer\n{result['answer']}")
+                st.markdown(f"Answer\n{result['answer']}")
 
                 if result.get("suggest_new_complaint"):
                     st.markdown("---")
@@ -3885,20 +4041,13 @@ if page == "ask_ai":
             elif result.get("question_type") != "classification":
                 if result.get("suggest_new_complaint"):
                     st.info(
-                        "Chưa có complaint nào khớp trong hệ thống — có thể đây là lần đầu ghi nhận. "
-                        "/ No matching complaint found yet — this may be the first time it's being recorded."
+                        "No matching complaint found yet — this may be the first time it's being recorded."
                     )
-                    st.markdown("Câu hỏi này đọc giống **1 khiếu nại/sự cố cụ thể** / This reads like **a specific complaint/issue**:")
+                    st.markdown("This reads like **a specific complaint/issue**:")
                     render_create_complaint_suggestion(conn, result.get("question", ""), "btn_goto_new_complaint_zerorows")
                 else:
                     st.info(
-                        "Không tìm thấy dữ liệu phù hợp trong hệ thống cho câu hỏi này. "
-                        "Có thể do: (1) tên (nhà cung cấp/khách hàng/sản phẩm/máy...) chưa khớp chính xác — thử kiểm tra "
-                        "lại chính tả hoặc dùng tên đầy đủ hơn; hoặc (2) hiện chưa có complaint nào thực sự khớp điều kiện "
-                        "này (ví dụ đúng khoảng thời gian được hỏi) — không phải lỗi, chỉ là dữ liệu chưa đủ. "
-                        "/ No matching data found. This could be because: (1) a name (supplier/customer/product/"
-                        "machine...) didn't match exactly, or (2) there's simply no complaint matching these "
-                        "conditions yet — not an error, just insufficient data."
+                        "No matching data found. This could be because: (1) a name (supplier/customer/product/machine...) didn't match exactly, or (2) there's simply no complaint matching these conditions yet — not an error, just insufficient data."
                     )
 
             elif matched_defect or matched_rc:
@@ -3909,28 +4058,21 @@ if page == "ask_ai":
                     unsafe_allow_html=True,
                 )
                 st.warning(
-                    "Loại lỗi/nguyên nhân này **đã có trong danh mục** — KHÔNG phải chưa được phân loại. Chỉ là "
-                    "hệ thống chưa có complaint thực tế nào ghi nhận đủ thông tin (thường do thiếu ngày phát sinh). "
-                    "/ This already **exists in the taxonomy** — it's not unclassified. The system just doesn't "
-                    "have a real complaint recorded with enough detail yet (often a missing date)."
+                    "This already **exists in the taxonomy** — it's not unclassified. The system just doesn't have a real complaint recorded with enough detail yet (often a missing date)."
                 )
                 st.markdown(
-                    "Nếu đây là 1 khiếu nại/sự cố cụ thể, dùng nút bên dưới để tạo Complaint mới đầy đủ "
-                    "(AI tự điền sản phẩm, khách hàng, số lượng...) — hoặc dùng form nhanh phía dưới nếu chỉ "
-                    "cần ghi nhận đơn giản với đúng mã đã khớp. / If this is a specific complaint, use the button "
-                    "below to create a full New Complaint (AI auto-fills product, customer, quantity...) — or use "
-                    "the quick form below for a simple record with the matched code."
+                    "If this is a specific complaint, use the button below to create a full New Complaint (AI auto-fills product, customer, quantity...) — or use the quick form below for a simple record with the matched code."
                 )
                 render_create_complaint_suggestion(conn, result.get("question", ""), "btn_goto_new_complaint_matched")
 
                 with st.form("quickform"):
-                    st.write("➕ Nhập nhanh 1 complaint cho trường hợp này / Quickly log a complaint for this case")
-                    new_date = st.date_input("Ngày phát sinh (bắt buộc) / Date occurred (required)")
+                    st.write("Quickly log a complaint for this case")
+                    new_date = st.date_input("Date occurred (required)")
 
                     defect_options = fetch_existing_codes(conn, "Defect")
                     rc_options = fetch_existing_codes(conn, "Root Cause")
-                    defect_labels = ["-- không rõ / unknown --"] + [f"{c} — {n}" for c, n in defect_options]
-                    rc_labels = ["-- không rõ / unknown --"] + [f"{c} — {n}" for c, n in rc_options]
+                    defect_labels = ["unknown --"] + [f"{c} — {n}" for c, n in defect_options]
+                    rc_labels = ["unknown --"] + [f"{c} — {n}" for c, n in rc_options]
 
                     def _default_index(labels, code):
                         if not code:
@@ -3945,12 +4087,11 @@ if page == "ask_ai":
                         index=_default_index(defect_labels, matched_defect),
                     )
                     rc_choice = st.selectbox(
-                        "Root cause code (nếu biết — đây thường là phần còn thiếu) / Root cause code (if known — "
-                        "usually the missing piece)", rc_labels,
+                        "Root cause code (if known — usually the missing piece)", rc_labels,
                         index=_default_index(rc_labels, matched_rc),
                     )
-                    new_notes = st.text_area("Ghi chú / mô tả thêm / Notes / additional description", value=result["question"])
-                    submitted = st.form_submit_button("💾 Lưu complaint mới / Save new complaint")
+                    new_notes = st.text_area("Notes / additional description", value=result["question"])
+                    submitted = st.form_submit_button("Save new complaint")
                     if submitted:
                         defect_final = None if defect_choice.startswith("--") else defect_choice.split(" — ")[0]
                         rc_final = None if rc_choice.startswith("--") else rc_choice.split(" — ")[0]
@@ -3964,27 +4105,20 @@ if page == "ask_ai":
                             new_id_quicksave = cur.fetchone()[0]
                         conn.commit()
                         compute_and_update_complaint_status(conn, new_id_quicksave)
-                        st.success("Đã lưu — bấm 'Hỏi AI' lại lần nữa để xem kết quả cập nhật. / Saved — click 'Ask AI' again to see the updated result.")
+                        st.success("Saved — click 'Ask AI' again to see the updated result.")
 
             else:
                 st.warning(
-                    "Không tìm thấy mã nào trong danh mục khớp với câu hỏi này — "
-                    "**có thể đây là loại lỗi/nguyên nhân mới**, chưa từng được phân loại. / No matching code found "
-                    "in the taxonomy — **this may be a new type of defect/root cause** not yet classified."
+                    "No matching code found in the taxonomy — **this may be a new type of defect/root cause** not yet classified."
                 )
 
                 if result.get("suggest_new_complaint"):
                     st.markdown(
-                        "Câu hỏi này đọc giống **1 khiếu nại/sự cố cụ thể** hơn — nên **tạo Complaint mới** trực tiếp "
-                        "(đầy đủ thông tin, AI tự điền sẵn các trường) thay vì chỉ gửi đề xuất 1 mã taxonomy đơn lẻ: "
-                        "/ This reads more like **a specific complaint/issue** — better to **create a New Complaint** "
-                        "directly (with AI-prefilled fields) rather than just submitting a single taxonomy suggestion:"
+                        "This reads more like **a specific complaint/issue** — better to **create a New Complaint** directly (with AI-prefilled fields) rather than just submitting a single taxonomy suggestion:"
                     )
                     render_create_complaint_suggestion(conn, result.get("question", ""), "btn_goto_new_complaint_classification")
                     st.caption(
-                        "Chỉ dùng form bên dưới nếu bạn thật sự chỉ muốn đề xuất thêm 1 khái niệm Defect/Root Cause/CAPA "
-                        "mới vào danh mục — KHÔNG kèm theo 1 complaint cụ thể nào. / Only use the form below if you "
-                        "really just want to propose a new Defect/Root Cause/CAPA concept — without an actual complaint."
+                        "Only use the form below if you really just want to propose a new Defect/Root Cause/CAPA concept — without an actual complaint."
                     )
 
                 sugg_result = st.session_state.pop("sugg_result", None)
@@ -3992,14 +4126,13 @@ if page == "ask_ai":
                     st.success(sugg_result)
 
                 with st.expander(
-                    "📥 Chỉ đề xuất thêm 1 khái niệm mới vào danh mục (không tạo complaint) / Only propose a new "
-                    "taxonomy concept (no complaint)"
+                    "Only propose a new taxonomy concept (no complaint)"
                 ):
                     with st.form("suggform"):
-                        sugg_type = st.radio("Loại đề xuất / Suggestion type", ["Defect", "Root Cause", "CAPA"], horizontal=True)
-                        sugg_name = st.text_input("Tên đề xuất (ngắn gọn) / Suggested name (short)", value=result["question"])
-                        sugg_reason = st.text_area("Mô tả / lý do / Description / reason", value=result["question"])
-                        submitted2 = st.form_submit_button("📤 Gửi vào hàng đợi / Submit to queue")
+                        sugg_type = st.radio("Suggestion type", ["Defect", "Root Cause", "CAPA"], horizontal=True)
+                        sugg_name = st.text_input("Suggested name (short)", value=result["question"])
+                        sugg_reason = st.text_area("Description / reason", value=result["question"])
+                        submitted2 = st.form_submit_button("Submit to queue")
                         if submitted2:
                             with conn.cursor() as cur:
                                 cur.execute(
@@ -4009,8 +4142,7 @@ if page == "ask_ai":
                                 )
                             conn.commit()
                             st.session_state["sugg_result"] = (
-                                "Đã gửi vào hàng đợi — vào tab 'Duyệt Taxonomy' để xem và xử lý. "
-                                "/ Sent to the queue — go to 'Review Taxonomy' to view and process it."
+                                "Sent to the queue — go to 'Review Taxonomy' to view and process it."
                             )
                             st.rerun()
 
@@ -4020,36 +4152,29 @@ if page == "ask_ai":
 if page == "new_complaint":
     conn = ensure_connection()
     tab_banner(
-        "📝", "Complaint mới / New Complaint",
-        "Nhập 1 complaint mới — hệ thống tự phân loại, gán mã có sẵn hoặc gửi vào hàng đợi chờ duyệt. "
-        "/ Log a new complaint — the system auto-classifies, matches an existing code, or sends it to "
-        "the approval queue.",
+        "📝", "New Complaint",
+        "Log a new complaint — the system auto-classifies, matches an existing code, or sends it to the approval queue.",
         "coral",
     )
 
     with st.expander(
-        "📧 Tạo nhanh từ nội dung email (dán chữ hoặc tải ảnh chụp email) / Quick-create from an email "
-        "(paste text or upload a screenshot)"
+        "Quick-create from an email (paste text or upload a screenshot)"
     ):
         email_text_input = st.text_area(
-            "Dán nguyên văn nội dung email vào đây / Paste the full email content here",
+            "Paste the full email content here",
             height=150, key="email_paste_input",
         )
         email_image_input = st.file_uploader(
-            "...hoặc tải lên ảnh chụp màn hình email / hình ảnh lỗi thực tế (có thể chọn nhiều ảnh) / "
             "...or upload email screenshot(s) / real defect photo(s) (multiple allowed)",
             type=["png", "jpg", "jpeg"], key="email_image_input", accept_multiple_files=True,
-            help="Có thể chọn nhiều ảnh cùng lúc (ví dụ vừa ảnh chụp email vừa ảnh chụp lỗi thực tế) — "
-                 "AI sẽ đọc tổng hợp tất cả để điền chính xác hơn. Tối đa 5 ảnh/lần. "
-                 "/ You can select multiple images at once (e.g. an email screenshot plus real defect "
-                 "photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
+            help="You can select multiple images at once (e.g. an email screenshot plus real defect photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
         )
-        render_paste_zone("tải lên ảnh chụp màn hình email")
-        if st.button("🔎 Trích xuất từ email / Extract from email", key="btn_extract_email"):
+        render_paste_zone("upload email screenshot")
+        if st.button("Extract from email", key="btn_extract_email"):
             if not email_text_input.strip() and not email_image_input:
-                st.warning("Bạn chưa dán nội dung hoặc tải ảnh email nào. / You haven't pasted any content or uploaded an image.")
+                st.warning("You haven't pasted any content or uploaded an image.")
             else:
-                with st.spinner("AI đang đọc email... / AI is reading the email..."):
+                with st.spinner("AI is reading the email..."):
                     ai_client = get_ai_client()
                     (product_names, customer_names, supplier_names,
                      staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
@@ -4064,8 +4189,7 @@ if page == "new_complaint":
                         ]
                         if len(email_image_input) > 5:
                             st.warning(
-                                f"Bạn tải lên {len(email_image_input)} ảnh — chỉ 5 ảnh đầu tiên được gửi cho AI đọc. "
-                                f"/ You uploaded {len(email_image_input)} images — only the first 5 are sent to AI."
+                                f"You uploaded {len(email_image_input)}You uploaded {len(email_image_input)} images — only the first 5 are sent to AI."
                             )
                         fields = extract_complaint_from_email(
                             ai_client, datetime.now().strftime("%Y-%m-%d"),
@@ -4081,15 +4205,12 @@ if page == "new_complaint":
                 matched_bits = apply_complaint_prefill_fields(fields)
                 if matched_bits:
                     st.session_state["email_extract_result"] = (
-                        "Đã đọc email và điền sẵn: " + ", ".join(matched_bits) + " — kiểm tra lại các trường "
-                        "bên dưới rồi lưu. / Read the email and prefilled: " + ", ".join(matched_bits) +
+                        "Email read and prefilled: " + ", ".join(matched_bits) + "Read the email and prefilled: " + ", ".join(matched_bits) +
                         " — review the fields below before saving."
                     )
                 else:
                     st.session_state["email_extract_result"] = (
-                        "Đã đọc email nhưng chưa tự nhận diện được trường nào khớp dữ liệu thật — "
-                        "mô tả đã được điền sẵn, bạn tự điền thêm các trường còn lại. / Read the email but couldn't "
-                        "match any field to real data — the description was prefilled, please fill in the rest."
+                        "Read the email but couldn't match any field to real data — the description was prefilled, please fill in the rest."
                     )
 
                 supplier_suggestion = fields.get("supplier")
@@ -4115,11 +4236,9 @@ if page == "new_complaint":
     if email_context and email_context.get("supplier_suggestion"):
         suggestion = email_context["supplier_suggestion"]
         source = email_context.get("suggestion_source")
-        hint = "email có nhắc trực tiếp / mentioned directly in the email" if source == "email" else "dựa theo lịch sử complaint trước đây / based on past complaint history"
+        hint = "mentioned directly in the email" if source == "email" else "based on past complaint history"
         st.info(
-            f"💡 Gợi ý nhà cung cấp liên quan ({hint}): **{suggestion}**. Lưu complaint bên dưới trước, "
-            f"sau đó sang tab '📊 Truy xuất dữ liệu' → mục xuất báo cáo để xác nhận và gửi email yêu cầu họ. "
-            f"/ Suggested related supplier ({hint}): **{suggestion}**. Save the complaint below first, then go to "
+            f"💡 Suggested related supplier ({hint}): **{suggestion}**. Save the complaint below first, then go to "
             f"'📊 Data Lookup' → export report to confirm and send them a request email."
         )
 
@@ -4137,107 +4256,97 @@ if page == "new_complaint":
         customers = fetch_lookup(conn, "customer", "customer_id", "name")
         cs_staff_list = fetch_cs_staff(conn)
 
-    product_labels = ["-- không rõ / unknown --"] + [name for _, name in products]
-    supplier_labels = ["-- không rõ / unknown --"] + [name for _, name in suppliers]
-    machine_labels = ["-- không rõ / unknown --"] + [name for _, name in machines]
-    customer_labels = ["-- không rõ / unknown --"] + [name for _, name in customers]
-    staff_labels = ["-- chưa chọn / not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list]
-    brand_labels = ["-- không rõ / unknown --"] + BRANDS
+    product_labels = ["unknown --"] + [name for _, name in products]
+    supplier_labels = ["unknown --"] + [name for _, name in suppliers]
+    machine_labels = ["unknown --"] + [name for _, name in machines]
+    customer_labels = ["unknown --"] + [name for _, name in customers]
+    staff_labels = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list]
+    brand_labels = ["unknown --"] + BRANDS
 
     rc_codes = fetch_existing_codes(conn, "Root Cause")
     capa_codes = fetch_existing_codes(conn, "CAPA")
-    rc_labels = ["-- để AI tự phân loại / let AI classify --"] + [f"{c} — {n}" for c, n in rc_codes]
-    capa_labels = ["-- không thêm / none --"] + [f"{c} — {n}" for c, n in capa_codes]
+    rc_labels = ["let AI classify --"] + [f"{c} — {n}" for c, n in rc_codes]
+    capa_labels = ["none --"] + [f"{c} — {n}" for c, n in capa_codes]
 
     with zone_card("amber"):
         st.caption(
-            "🔎 Root Cause & CAPA khác (nếu biết trước) — nằm ngoài do giới hạn kỹ thuật của Streamlit form. "
-            "/ Extra Root Cause & CAPA counts (if known upfront) — placed outside the form due to a Streamlit limitation."
+            "Extra Root Cause & CAPA counts (if known upfront) — placed outside the form due to a Streamlit limitation."
         )
         col_extra1, col_extra2 = st.columns(2)
         with col_extra1:
             if "prefill_complaint_extra_rc_count" in st.session_state:
                 st.session_state["extra_rc_count"] = st.session_state.pop("prefill_complaint_extra_rc_count")
             extra_rc_count = st.number_input(
-                "Root Cause khác / Other root causes",
+                "Other root causes",
                 min_value=0, max_value=10, step=1, value=0, key="extra_rc_count",
-                help="Số Root Cause khác cần thêm — sẽ hiện thêm ô ngay cạnh Root Cause chính bên dưới. "
-                     "/ Number of other root causes — extra fields appear next to the main one below.",
+                help="Number of other root causes — extra fields appear next to the main one below.",
             )
         with col_extra2:
             if "prefill_complaint_extra_capa_count" in st.session_state:
                 st.session_state["extra_capa_count"] = st.session_state.pop("prefill_complaint_extra_capa_count")
             extra_capa_count = st.number_input(
-                "CAPA khác / Other CAPAs",
+                "Other CAPAs",
                 min_value=0, max_value=10, step=1, value=0, key="extra_capa_count",
-                help="Số CAPA khác cần thêm — sẽ hiện thêm ô ngay cạnh CAPA chính bên dưới. "
-                     "/ Number of other CAPAs — extra fields appear next to the main one below.",
+                help="Number of other CAPAs — extra fields appear next to the main one below.",
             )
 
     with st.form("newcomplaintform"):
         if "prefill_complaint_desc" in st.session_state:
             st.session_state["newcomplaint_desc_value"] = st.session_state.pop("prefill_complaint_desc")
             st.caption(
-                "📥 Các trường bên dưới được điền sẵn từ câu hỏi vừa hỏi ở tab 'Hỏi AI' — kiểm tra lại trước khi lưu. "
-                "/ The fields below were prefilled from your question in the 'Ask AI' tab — review before saving."
+                "The fields below were prefilled from your question in the 'Ask AI' tab — review before saving."
             )
         with zone_card("teal"):
-            section_header("📝", "Mô tả sự cố & ảnh minh họa / Issue description & photo", "teal")
+            section_header("📝", "Issue description & photo", "teal")
             desc = st.text_area(
-                "Mô tả sự cố / Issue description",
+                "Issue description",
                 height=100, key="newcomplaint_desc_value",
-                help="Càng chi tiết càng tốt — hệ thống dùng phần này để tự phân loại và gán mã có sẵn. "
-                     "/ The more detail the better — this is what the system uses to auto-classify and match a code.",
+                help="The more detail the better — this is what the system uses to auto-classify and match a code.",
             )
             with validity_radio_box():
                 complaint_validity_new = st.radio(
-                    "Đánh giá ban đầu / Initial assessment",
+                    "Initial assessment",
                     COMPLAINT_VALIDITY_OPTIONS,
                     horizontal=True, key="newcomplaint_validity_value",
-                    help="Complaint này là lỗi thật từ Nilorn, hay do chính khách hàng gây ra nhưng vẫn phát sinh "
-                         "khiếu nại? Chốt theo hiểu biết ban đầu — có thể sửa lại sau ở trang chi tiết nếu điều tra "
-                         "ra khác. / Is this a genuine Nilorn defect, or an issue caused by the customer themselves "
-                         "that still resulted in a complaint? Can be corrected later on the detail page.",
+                    help="Is this a genuine Nilorn defect, or an issue caused by the customer themselves that still resulted in a complaint? Can be corrected later on the detail page.",
                 )
             defect_photo_input = st.file_uploader(
-                "Ảnh minh họa lỗi (tùy chọn) / Defect photo (optional)",
+                "Defect photo (optional)",
                 type=["png", "jpg", "jpeg"], key="newcomplaint_defect_photo",
-                help="Ảnh chụp thực tế lỗi này — sẽ được chèn vào báo cáo Word để người đọc dễ hình dung. "
-                     "/ A real photo of this defect — will be embedded in the Word report for easier understanding.",
+                help="A real photo of this defect — will be embedded in the Word report for easier understanding.",
             )
-            render_paste_zone("Ảnh minh họa lỗi (tùy chọn)")
+            render_paste_zone("Defect illustration photo (optional)")
 
         col1, col2 = st.columns(2)
         with col1:
             with zone_card("blue"):
-                section_header("📦", "Sản phẩm & nhà cung cấp / Product & supplier", "blue")
+                section_header("📦", "Product & supplier", "blue")
                 if "prefill_complaint_date" in st.session_state:
                     st.session_state["newcomplaint_date_value"] = st.session_state.pop("prefill_complaint_date")
-                date_opened_new = st.date_input("Ngày phát sinh (bắt buộc) / Date occurred (required)", key="newcomplaint_date_value")
+                date_opened_new = st.date_input("Date occurred (required)", key="newcomplaint_date_value")
 
                 if "prefill_complaint_product" in st.session_state:
                     match_label = find_best_label_match(st.session_state.pop("prefill_complaint_product"), product_labels)
                     if match_label:
                         st.session_state["newcomplaint_product_value"] = match_label
-                product_choice = st.selectbox("Sản phẩm (nếu đã có) / Product (if existing)", product_labels, key="newcomplaint_product_value")
-                new_product_name = st.text_input("...hoặc nhập tên/mã sản phẩm MỚI (nếu chưa có trong danh sách) / ...or enter a NEW product name/code")
-                new_product_group = st.selectbox("Product Group cho sản phẩm mới (chỉ cần nếu ô trên có nhập) / Product Group for the new product (only if entered above)", PRODUCT_GROUPS)
+                product_choice = st.selectbox("Product (if existing)", product_labels, key="newcomplaint_product_value")
+                new_product_name = st.text_input("...or enter a NEW product name/code")
+                new_product_group = st.selectbox("Product Group for the new product (only if entered above)", PRODUCT_GROUPS)
 
                 if "prefill_complaint_supplier" in st.session_state:
                     match_label = find_best_label_match(st.session_state.pop("prefill_complaint_supplier"), supplier_labels)
                     if match_label:
                         st.session_state["newcomplaint_supplier_value"] = match_label
-                supplier_choice = st.selectbox("Nhà cung cấp / Supplier", supplier_labels, key="newcomplaint_supplier_value")
+                supplier_choice = st.selectbox("Supplier", supplier_labels, key="newcomplaint_supplier_value")
 
                 if "prefill_complaint_brand" in st.session_state:
                     match_label = find_best_label_match(st.session_state.pop("prefill_complaint_brand"), brand_labels)
                     if match_label:
                         st.session_state["newcomplaint_brand_value"] = match_label
-                brand_choice = st.selectbox("Thương hiệu / Brand", brand_labels, key="newcomplaint_brand_value")
+                brand_choice = st.selectbox("Brand", brand_labels, key="newcomplaint_brand_value")
         with col2:
             with zone_card("coral"):
-                section_header("🧾", "Đơn hàng & khách hàng / Order & customer", "coral")
-                machine_choice = st.selectbox("Máy liên quan / Related machine", machine_labels)
+                section_header("🧾", "Order & customer", "coral")
                 if "prefill_complaint_so_po" in st.session_state:
                     st.session_state["newcomplaint_so_po_value"] = st.session_state.pop("prefill_complaint_so_po")
                 so_po_new = st.text_input("Sales Order No.", key="newcomplaint_so_po_value")
@@ -4248,62 +4357,60 @@ if page == "new_complaint":
                     match_label = find_best_label_match(st.session_state.pop("prefill_complaint_customer"), customer_labels)
                     if match_label:
                         st.session_state["newcomplaint_customer_value"] = match_label
-                customer_choice = st.selectbox("Khách hàng / Customer", customer_labels, key="newcomplaint_customer_value")
-                new_customer_name = st.text_input("...hoặc nhập tên khách hàng MỚI (nếu chưa có trong danh sách) / ...or enter a NEW customer name")
+                customer_choice = st.selectbox("Customer", customer_labels, key="newcomplaint_customer_value")
+                new_customer_name = st.text_input("...or enter a NEW customer name")
 
         with zone_card("gray"):
-            section_header("👤", "Người ghi nhận & số lượng / Recorded by & quantities", "gray")
+            section_header("👤", "Recorded by & quantities", "gray")
             if "prefill_complaint_staff" in st.session_state:
                 match_label = find_best_label_match(st.session_state.pop("prefill_complaint_staff"), staff_labels)
                 if match_label:
                     st.session_state["newcomplaint_staff_value"] = match_label
-            staff_choice = st.selectbox("Ghi nhận bởi / Recorded by", staff_labels, key="newcomplaint_staff_value")
+            staff_choice = st.selectbox("Recorded by", staff_labels, key="newcomplaint_staff_value")
 
             col3, col4 = st.columns(2)
             with col3:
-                qty_inspected_new = st.number_input("Số lượng kiểm / Quantity inspected", min_value=0, step=1, value=0)
+                qty_inspected_new = st.number_input("Quantity inspected", min_value=0, step=1, value=0)
             with col4:
                 if "prefill_complaint_quantity" in st.session_state:
                     st.session_state["newcomplaint_qty_affected_value"] = st.session_state.pop("prefill_complaint_quantity")
                 qty_affected_new = st.number_input(
-                    "Số lượng lỗi / Quantity affected", min_value=0, step=1, key="newcomplaint_qty_affected_value",
+                    "Quantity affected", min_value=0, step=1, key="newcomplaint_qty_affected_value",
                 )
 
         st.markdown("---")
         with zone_card("amber"):
-            section_header("🔎", "Root cause & CAPA (tùy chọn / optional)", "amber")
+            section_header("🔎", "optional)", "amber")
             st.caption(
-                "Điền nếu đã biết, bỏ qua nếu chưa (AI sẽ tự phân loại root cause nếu để mặc định). "
-                "/ Fill in if known, skip otherwise (AI will auto-classify the root cause by default)."
+                "Fill in if known, skip otherwise (AI will auto-classify the root cause by default)."
             )
             if "prefill_complaint_rc" in st.session_state:
                 prefill_rc_code = st.session_state.pop("prefill_complaint_rc")
                 match_label = next((lbl for lbl in rc_labels if lbl.startswith(prefill_rc_code + " —")), None)
                 if match_label:
                     st.session_state["newcomplaint_rc_value"] = match_label
-            rc_choice = st.selectbox("Root cause (nếu đã có mã sẵn) / Root cause (if code already known)", rc_labels, key="newcomplaint_rc_value")
+            rc_choice = st.selectbox("Root cause (if code already known)", rc_labels, key="newcomplaint_rc_value")
             if "prefill_complaint_rc_new" in st.session_state:
                 st.session_state["newcomplaint_new_rc_text_value"] = st.session_state.pop("prefill_complaint_rc_new")
             new_rc_text = st.text_input(
-                "...hoặc mô tả nguyên nhân MỚI (nếu chưa có mã phù hợp — sẽ gửi vào hàng đợi chờ duyệt) "
-                "/ ...or describe a NEW root cause (if no code fits — will be sent to the approval queue)",
+                "...or describe a NEW root cause (if no code fits — will be sent to the approval queue)",
                 key="newcomplaint_new_rc_text_value",
             )
 
             extra_rc_entries = []
             for i in range(extra_rc_count):
-                st.caption(f"Root cause khác #{i + 1} / Other root cause #{i + 1}")
+                st.caption(f"Other Root Cause #{i + 1}")
                 if f"prefill_complaint_extra_rc_{i}_code" in st.session_state:
                     prefill_code_i = st.session_state.pop(f"prefill_complaint_extra_rc_{i}_code")
                     match_label_i = next((lbl for lbl in rc_labels if lbl.startswith(prefill_code_i + " —")), None)
-                    st.session_state[f"extra_rc_choice_{i}"] = match_label_i or "-- để AI tự phân loại / let AI classify --"
+                    st.session_state[f"extra_rc_choice_{i}"] = match_label_i or "let AI classify --"
                 if f"prefill_complaint_extra_rc_{i}_new" in st.session_state:
                     st.session_state[f"extra_rc_text_{i}"] = st.session_state.pop(f"prefill_complaint_extra_rc_{i}_new")
                 ec1, ec2 = st.columns(2)
                 with ec1:
-                    choice_i = st.selectbox(f"Root cause #{i + 1} (nếu đã có mã sẵn) / (if code already known)", rc_labels, key=f"extra_rc_choice_{i}")
+                    choice_i = st.selectbox(f"Root cause #{i + 1}(if code already known)", rc_labels, key=f"extra_rc_choice_{i}")
                 with ec2:
-                    text_i = st.text_input(f"...hoặc mô tả nguyên nhân MỚI #{i + 1} / ...or describe a NEW root cause #{i + 1}", key=f"extra_rc_text_{i}")
+                    text_i = st.text_input(f"...or describe a NEW root cause #{i + 1}", key=f"extra_rc_text_{i}")
                 extra_rc_entries.append((choice_i, text_i))
 
             col5, col6 = st.columns(2)
@@ -4314,29 +4421,28 @@ if page == "new_complaint":
                     if match_label:
                         st.session_state["newcomplaint_capa_value"] = match_label
                 capa_choice = st.selectbox(
-                    "CAPA — hành động khắc phục (nếu đã có mã sẵn) / CAPA — corrective action (if code already known)",
+                    "CAPA — corrective action (if code already known)",
                     capa_labels, key="newcomplaint_capa_value",
                 )
                 if "prefill_complaint_capa_new" in st.session_state:
                     st.session_state["newcomplaint_new_capa_text_value"] = st.session_state.pop("prefill_complaint_capa_new")
                 new_capa_text = st.text_input(
-                    "...hoặc mô tả CAPA MỚI (nếu chưa có mã phù hợp — sẽ gửi vào hàng đợi chờ duyệt) "
-                    "/ ...or describe a NEW CAPA (if no code fits — will be sent to the approval queue)",
+                    "...or describe a NEW CAPA (if no code fits — will be sent to the approval queue)",
                     key="newcomplaint_new_capa_text_value",
                 )
                 if "prefill_complaint_capa_responsible" in st.session_state:
                     st.session_state["newcomplaint_capa_responsible_value"] = st.session_state.pop("prefill_complaint_capa_responsible")
-                capa_responsible = st.text_input("Người phụ trách CAPA / CAPA responsible person", key="newcomplaint_capa_responsible_value")
+                capa_responsible = st.text_input("CAPA responsible person", key="newcomplaint_capa_responsible_value")
             with col6:
-                capa_date = st.date_input("Ngày đề xuất CAPA / CAPA proposed date", value=date_opened_new)
+                capa_date = st.date_input("CAPA proposed date", value=date_opened_new)
 
             extra_capa_entries = []
             for i in range(extra_capa_count):
-                st.caption(f"CAPA khác #{i + 1} / Other CAPA #{i + 1}")
+                st.caption(f"Other CAPA #{i + 1}")
                 if f"prefill_complaint_extra_capa_{i}_code" in st.session_state:
                     prefill_code_i = st.session_state.pop(f"prefill_complaint_extra_capa_{i}_code")
                     match_label_i = next((lbl for lbl in capa_labels if lbl.startswith(prefill_code_i + " —")), None)
-                    st.session_state[f"extra_capa_choice_{i}"] = match_label_i or "-- không thêm / none --"
+                    st.session_state[f"extra_capa_choice_{i}"] = match_label_i or "none --"
                 if f"prefill_complaint_extra_capa_{i}_new" in st.session_state:
                     st.session_state[f"extra_capa_text_{i}"] = st.session_state.pop(f"prefill_complaint_extra_capa_{i}_new")
                 if f"prefill_complaint_extra_capa_{i}_resp" in st.session_state:
@@ -4344,19 +4450,19 @@ if page == "new_complaint":
                 ec3, ec4 = st.columns(2)
                 with ec3:
                     capa_choice_i = st.selectbox(
-                        f"CAPA #{i + 1} (nếu đã có mã sẵn) / (if code already known)", capa_labels, key=f"extra_capa_choice_{i}",
+                        f"CAPA #{i + 1}(if code already known)", capa_labels, key=f"extra_capa_choice_{i}",
                     )
-                    capa_text_i = st.text_input(f"...hoặc mô tả CAPA MỚI #{i + 1} / ...or describe a NEW CAPA #{i + 1}", key=f"extra_capa_text_{i}")
+                    capa_text_i = st.text_input(f"...or describe a NEW CAPA #{i + 1}", key=f"extra_capa_text_{i}")
                 with ec4:
-                    capa_resp_i = st.text_input(f"Người phụ trách CAPA #{i + 1} / Responsible person for CAPA #{i + 1}", key=f"extra_capa_resp_{i}")
-                    capa_date_i = st.date_input(f"Ngày đề xuất CAPA #{i + 1} / Proposed date for CAPA #{i + 1}", value=date_opened_new, key=f"extra_capa_date_{i}")
+                    capa_resp_i = st.text_input(f"CAPA Responsible Person #{i + 1}", key=f"extra_capa_resp_{i}")
+                    capa_date_i = st.date_input(f"CAPA Proposed Date #{i + 1}", value=date_opened_new, key=f"extra_capa_date_{i}")
                 extra_capa_entries.append((capa_choice_i, capa_text_i, capa_resp_i, capa_date_i))
 
-        submitted_new = st.form_submit_button("🔎 Phân loại & Lưu / Classify & Save")
+        submitted_new = st.form_submit_button("Classify & Save")
 
     if submitted_new:
         if not desc.strip():
-            st.warning("Bạn chưa nhập mô tả sự cố. / You haven't entered an issue description.")
+            st.warning("You haven't entered an issue description.")
         else:
             ai_client = get_ai_client()
             product_id_new = None if product_choice.startswith("--") else products[product_labels.index(product_choice) - 1][0]
@@ -4369,7 +4475,7 @@ if page == "new_complaint":
                 )
                 if existing_match:
                     product_id_new = existing_match
-                    st.info(f"Sản phẩm '{new_product_name.strip()}' đã có sẵn (kể cả khác định dạng) — dùng lại, không tạo trùng. / Product already exists (even if formatted differently) — reusing it, not creating a duplicate.")
+                    st.info(f"Product '{new_product_name.strip()}Product already exists (even if formatted differently) — reusing it, not creating a duplicate.")
                 else:
                     close_matches = [
                         name for _, name in products
@@ -4377,10 +4483,8 @@ if page == "new_complaint":
                     ]
                     if close_matches:
                         st.warning(
-                            f"⚠️ Sản phẩm mới '{new_product_name.strip()}' khá giống sản phẩm đã có: "
-                            f"**{', '.join(close_matches)}** — vẫn tạo mới, nhưng bạn kiểm tra lại xem có phải "
-                            f"trùng sản phẩm không (nếu trùng, báo mình để gộp lại). / New product looks similar "
-                            f"to an existing one: **{', '.join(close_matches)}** — still creating it, please verify "
+                            f"⚠️ New product '{new_product_name.strip()}' looks similar to an existing one: "
+                            f"**{', '.join(close_matches)}** — still creating it, please verify "
                             f"it's not a duplicate."
                         )
                     with conn.cursor() as cur:
@@ -4392,7 +4496,7 @@ if page == "new_complaint":
                     conn.commit()
 
             supplier_id_new = None if supplier_choice.startswith("--") else suppliers[supplier_labels.index(supplier_choice) - 1][0]
-            machine_id_new = None if machine_choice.startswith("--") else machines[machine_labels.index(machine_choice) - 1][0]
+            machine_id_new = None
             customer_id_new = None if customer_choice.startswith("--") else customers[customer_labels.index(customer_choice) - 1][0]
 
             if new_customer_name.strip():
@@ -4403,7 +4507,7 @@ if page == "new_complaint":
                 )
                 if existing_match_c:
                     customer_id_new = existing_match_c
-                    st.info(f"Khách hàng '{new_customer_name.strip()}' đã có sẵn (kể cả khác định dạng) — dùng lại, không tạo trùng. / Customer already exists — reusing it, not creating a duplicate.")
+                    st.info(f"Customer '{new_customer_name.strip()}Customer already exists — reusing it, not creating a duplicate.")
                 else:
                     close_matches_c = [
                         name for _, name in customers
@@ -4411,10 +4515,8 @@ if page == "new_complaint":
                     ]
                     if close_matches_c:
                         st.warning(
-                            f"⚠️ Khách hàng mới '{new_customer_name.strip()}' khá giống khách hàng đã có: "
-                            f"**{', '.join(close_matches_c)}** — vẫn tạo mới, nhưng bạn kiểm tra lại xem có phải "
-                            f"trùng khách hàng không (nếu trùng, báo mình để gộp lại). / New customer looks similar "
-                            f"to an existing one — please verify it's not a duplicate."
+                            f"⚠️ New customer '{new_customer_name.strip()}' looks similar to an existing one: "
+                            f"**{', '.join(close_matches_c)}** — please verify it's not a duplicate."
                         )
                     with conn.cursor() as cur:
                         cur.execute(
@@ -4430,7 +4532,7 @@ if page == "new_complaint":
             if defect_photo_input is not None:
                 defect_photo_b64 = base64.b64encode(defect_photo_input.getvalue()).decode("utf-8")
 
-            with st.spinner("Đang lưu và phân loại... / Saving and classifying..."):
+            with st.spinner("Saving and classifying..."):
                 with conn.cursor() as cur:
                     cur.execute(
                         """insert into complaint
@@ -4463,7 +4565,7 @@ if page == "new_complaint":
                         conn.commit()
                         add_root_cause_to_complaint(conn, new_complaint_id, manual_rc_code)
                         used_rc_codes.append(manual_rc_code)
-                        summary_lines.append(f"✅ **{kind}**: đã chọn tay — **{manual_rc_code}** (bỏ qua AI) / manually selected — **{manual_rc_code}** (AI skipped)")
+                        summary_lines.append(f"✅ **{kind}**: manually selected — **{manual_rc_code}manually selected — **{manual_rc_code}** (AI skipped)")
                         continue
 
                     if kind == "Root Cause" and new_rc_text.strip():
@@ -4472,8 +4574,8 @@ if page == "new_complaint":
                         conn = ensure_connection()
                         closest = check_result.get("closest_existing_code") or check_result.get("matched_code")
                         note = (
-                            "Nhân viên tự mô tả khi nhập complaint — chưa có mã phù hợp trong danh mục. "
-                            f"AI kiểm tra chéo: {check_result.get('reasoning', '(không có ghi chú)')}"
+                            "Manually described by staff when entering the complaint — no matching code in the taxonomy yet. "
+                            f"AI cross-check: {check_result.get('reasoning', '(no notes)')}"
                         )
                         with conn.cursor() as cur:
                             cur.execute(
@@ -4485,14 +4587,12 @@ if page == "new_complaint":
                         conn.commit()
                         if closest:
                             summary_lines.append(
-                                f"⚠️ **{kind}**: đã gửi vào hàng đợi — AI phát hiện **có thể liên quan đến mã {closest}**, "
-                                f"reviewer sẽ xem xét khi duyệt / sent to the queue — AI found it **may relate to code "
+                                f"⚠️ **{kind}**: sent to the queue — AI found it **may relate to code {closest}sent to the queue — AI found it **may relate to code "
                                 f"{closest}**, the reviewer will check during approval"
                             )
                         else:
                             summary_lines.append(
-                                f"🕓 **{kind}**: nguyên nhân mới do bạn mô tả — AI xác nhận chưa có mã nào liên quan, đã gửi vào hàng đợi chờ duyệt "
-                                f"/ new root cause as described — AI confirmed no related code exists, sent to the approval queue"
+                                f"🕓 **{kind}new root cause as described — AI confirmed no related code exists, sent to the approval queue"
                             )
                         continue
 
@@ -4510,14 +4610,14 @@ if page == "new_complaint":
                         if kind == "Root Cause":
                             add_root_cause_to_complaint(conn, new_complaint_id, result["matched_code"])
                             used_rc_codes.append(result["matched_code"])
-                        summary_lines.append(f"✅ **{kind}**: khớp có sẵn — **{result['matched_code']}** / matched existing code — **{result['matched_code']}**")
+                        summary_lines.append(f"✅ **{kind}**: matched existing — **{result['matched_code']}** / matched existing code — **{result['matched_code']}**")
                     else:
                         # AI đôi khi không tự đặt được tên đề xuất (suggested_name = null) khi mô tả quá
                         # mơ hồ — cột ai_suggested_name trong DB không cho phép NULL, nên luôn cần giá trị
                         # dự phòng lấy từ mô tả gốc, tránh insert thất bại giữa chừng. / AI sometimes
                         # returns no suggested_name when the description is too vague — the DB column is
                         # NOT NULL, so always fall back to the original description to avoid a failed insert.
-                        fallback_name = truncate_at_word(desc, 100) if desc else "(chưa xác định / unnamed)"
+                        fallback_name = truncate_at_word(desc, 100) if desc else "unnamed)"
                         safe_name = (result.get("suggested_name") or "").strip() or fallback_name
                         with conn.cursor() as cur:
                             cur.execute(
@@ -4529,9 +4629,7 @@ if page == "new_complaint":
                             )
                         conn.commit()
                         summary_lines.append(
-                            f"🕓 **{kind}**: chưa chắc chắn (có thể là loại mới) — "
-                            f"đã gửi vào hàng đợi chờ duyệt, xem ở tab 'Duyệt Taxonomy' / uncertain (may be new) — "
-                            f"sent to the approval queue, see the 'Review Taxonomy' tab"
+                            f"🕓 **{kind}uncertain (may be new) — sent to the approval queue, see the 'Review Taxonomy' tab"
                         )
 
                 if not capa_choice.startswith("--"):
@@ -4544,7 +4642,7 @@ if page == "new_complaint":
                             (new_complaint_id, manual_capa_code, capa_date, capa_responsible or None),
                         )
                     conn.commit()
-                    summary_lines.append(f"📌 **CAPA**: đã thêm — **{manual_capa_code}** / added — **{manual_capa_code}**")
+                    summary_lines.append(f"📌 **CAPA**: added — **{manual_capa_code}**")
                     used_capa_codes.append(manual_capa_code)
                 elif new_capa_text.strip():
                     capa_taxonomy_list = load_taxonomy_list(conn, "CAPA")
@@ -4552,8 +4650,8 @@ if page == "new_complaint":
                     conn = ensure_connection()
                     closest = check_result.get("closest_existing_code") or check_result.get("matched_code")
                     note = (
-                        f"Nhân viên tự đề xuất khi nhập complaint. Người phụ trách dự kiến: {capa_responsible or '(chưa rõ)'}. "
-                        f"AI kiểm tra chéo: {check_result.get('reasoning', '(không có ghi chú)')}"
+                        f"Proposed by staff when entering the complaint. Expected responsible person: {capa_responsible or '(unknown)'}. "
+                        f"AI cross-check: {check_result.get('reasoning', '(no notes)')}"
                     )
                     with conn.cursor() as cur:
                         cur.execute(
@@ -4565,19 +4663,17 @@ if page == "new_complaint":
                     conn.commit()
                     if closest:
                         summary_lines.append(
-                            f"⚠️ **CAPA**: đã gửi vào hàng đợi — AI phát hiện **có thể liên quan đến mã {closest}**, "
-                            f"reviewer sẽ xem xét khi duyệt / sent to the queue — AI found it may relate to "
-                            f"**{closest}**, the reviewer will check during approval"
+                            f"⚠️ **CAPA**: sent to the queue — AI found it may relate to **{closest}**, the reviewer will check during approval"
                         )
                     else:
-                        summary_lines.append("🕓 **CAPA**: hành động mới do bạn mô tả — AI xác nhận chưa có mã nào liên quan, đã gửi vào hàng đợi chờ duyệt / new action as described — sent to the approval queue")
+                        summary_lines.append("new action as described — sent to the approval queue")
 
                 for idx, (rc_choice_i, rc_text_i) in enumerate(extra_rc_entries, start=1):
                     if not rc_choice_i.startswith("--"):
                         rc_code_i = rc_choice_i.split(" — ")[0]
                         add_root_cause_to_complaint(conn, new_complaint_id, rc_code_i)
                         used_rc_codes.append(rc_code_i)
-                        summary_lines.append(f"✅ **Root Cause khác #{idx}**: đã chọn tay — **{rc_code_i}** / manually selected — **{rc_code_i}**")
+                        summary_lines.append(f"✅ **Other Root Cause #{idx}**: manually selected — **{rc_code_i}** / manually selected — **{rc_code_i}**")
                     elif rc_text_i.strip():
                         rc_taxonomy_list_i = load_taxonomy_list(conn, "Root Cause")
                         check_result_i = classify_description(
@@ -4588,13 +4684,13 @@ if page == "new_complaint":
                             add_root_cause_to_complaint(conn, new_complaint_id, check_result_i["matched_code"])
                             used_rc_codes.append(check_result_i["matched_code"])
                             summary_lines.append(
-                                f"✅ **Root Cause khác #{idx}**: AI tự nhận diện khớp có sẵn — **{check_result_i['matched_code']}** / AI auto-matched — **{check_result_i['matched_code']}**"
+                                f"✅ **Other Root Cause #{idx}**: AI auto-matched existing — **{check_result_i['matched_code']}**"
                             )
                         else:
                             closest_i = check_result_i.get("closest_existing_code") or check_result_i.get("matched_code")
                             note_i = (
-                                f"Root cause khác #{idx} — nhân viên tự mô tả khi nhập complaint, chưa có mã phù hợp. "
-                                f"AI kiểm tra chéo: {check_result_i.get('reasoning', '(không có ghi chú)')}"
+                                f"Other Root Cause #{idx} — manually described by staff when entering the complaint, no matching code yet. "
+                                f"AI cross-check: {check_result_i.get('reasoning', '(no notes)')}"
                             )
                             with conn.cursor() as cur:
                                 cur.execute(
@@ -4606,12 +4702,11 @@ if page == "new_complaint":
                             conn.commit()
                             if closest_i:
                                 summary_lines.append(
-                                    f"⚠️ **Root Cause khác #{idx}**: đã gửi vào hàng đợi — AI phát hiện "
-                                    f"**có thể liên quan đến mã {closest_i}**, reviewer sẽ xem xét khi duyệt / sent to "
-                                    f"the queue — may relate to **{closest_i}**"
+                                    f"⚠️ **Other Root Cause #{idx}**: sent to the queue — "
+                                    f"may relate to **{closest_i}**"
                                 )
                             else:
-                                summary_lines.append(f"🕓 **Root Cause khác #{idx}**: nguyên nhân mới, đã gửi vào hàng đợi chờ duyệt / new root cause, sent to the approval queue")
+                                summary_lines.append(f"🕓 **Other Root Cause #{idx}**: new root cause, sent to the approval queue")
                     else:
                         rc_taxonomy_list_i = load_taxonomy_list(conn, "Root Cause")
                         check_result_i = classify_description(
@@ -4624,17 +4719,17 @@ if page == "new_complaint":
                             add_root_cause_to_complaint(conn, new_complaint_id, check_result_i["matched_code"])
                             used_rc_codes.append(check_result_i["matched_code"])
                             summary_lines.append(
-                                f"✅ **Root Cause khác #{idx}**: AI tự phát hiện thêm từ mô tả chính — **{check_result_i['matched_code']}** / AI found this from the main description — **{check_result_i['matched_code']}**"
+                                f"✅ **Other Root Cause #{idx}**: AI additionally found from the main description — **{check_result_i['matched_code']}**"
                             )
                         else:
-                            summary_lines.append(f"➖ **Root Cause khác #{idx}**: AI không tìm thấy thêm root cause nào khác — bỏ trống / AI found no additional root cause — left blank")
+                            summary_lines.append(f"➖ **Other Root Cause #{idx}AI found no additional root cause — left blank")
 
                 for idx, (capa_choice_i, capa_text_i, capa_resp_i, capa_date_i) in enumerate(extra_capa_entries, start=1):
                     if not capa_choice_i.startswith("--"):
                         capa_code_i = capa_choice_i.split(" — ")[0]
                         add_capa_action_to_complaint(conn, new_complaint_id, capa_code_i, capa_date_i, capa_resp_i or None)
                         used_capa_codes.append(capa_code_i)
-                        summary_lines.append(f"📌 **CAPA khác #{idx}**: đã thêm — **{capa_code_i}** / added — **{capa_code_i}**")
+                        summary_lines.append(f"📌 **Other CAPA #{idx}**: added — **{capa_code_i}** / added — **{capa_code_i}**")
                     elif capa_text_i.strip():
                         capa_taxonomy_list_i = load_taxonomy_list(conn, "CAPA")
                         check_result_i = classify_description(
@@ -4645,14 +4740,14 @@ if page == "new_complaint":
                             add_capa_action_to_complaint(conn, new_complaint_id, check_result_i["matched_code"], capa_date_i, capa_resp_i or None)
                             used_capa_codes.append(check_result_i["matched_code"])
                             summary_lines.append(
-                                f"📌 **CAPA khác #{idx}**: AI tự nhận diện khớp có sẵn — **{check_result_i['matched_code']}** / AI auto-matched — **{check_result_i['matched_code']}**"
+                                f"📌 **Other CAPA #{idx}**: AI auto-matched existing — **{check_result_i['matched_code']}**"
                             )
                         else:
                             closest_i = check_result_i.get("closest_existing_code") or check_result_i.get("matched_code")
                             note_i = (
-                                f"CAPA khác #{idx} — nhân viên tự đề xuất khi nhập complaint. "
-                                f"Người phụ trách dự kiến: {capa_resp_i or '(chưa rõ)'}. "
-                                f"AI kiểm tra chéo: {check_result_i.get('reasoning', '(không có ghi chú)')}"
+                                f"Other CAPA #{idx} — proposed by staff when entering the complaint. "
+                                f"Expected responsible person: {capa_resp_i or '(unknown)'}. "
+                                f"AI cross-check: {check_result_i.get('reasoning', '(no notes)')}"
                             )
                             with conn.cursor() as cur:
                                 cur.execute(
@@ -4664,12 +4759,11 @@ if page == "new_complaint":
                             conn.commit()
                             if closest_i:
                                 summary_lines.append(
-                                    f"⚠️ **CAPA khác #{idx}**: đã gửi vào hàng đợi — AI phát hiện "
-                                    f"**có thể liên quan đến mã {closest_i}**, reviewer sẽ xem xét khi duyệt / sent to "
-                                    f"the queue — may relate to **{closest_i}**"
+                                    f"⚠️ **Other CAPA #{idx}**: sent to the queue — "
+                                    f"may relate to **{closest_i}**"
                                 )
                             else:
-                                summary_lines.append(f"🕓 **CAPA khác #{idx}**: hành động mới, đã gửi vào hàng đợi chờ duyệt / new action, sent to the approval queue")
+                                summary_lines.append(f"🕓 **Other CAPA #{idx}**: new action, sent to the approval queue")
 
             # Gợi ý nhà cung cấp liên quan (dựa theo lịch sử) — chỉ khi CS KHÔNG chọn sẵn nhà cung cấp lúc
             # nhập complaint, để hướng dẫn bước tiếp theo (gửi email yêu cầu điều tra) ngay cả khi complaint
@@ -4688,18 +4782,21 @@ if page == "new_complaint":
             # Taxonomy mới được báo nữa).
             pending_lines_new = [
                 ln for ln in summary_lines
-                if "hàng đợi chờ duyệt" in ln or "đã gửi vào hàng đợi" in ln
+                if "approval queue" in ln or "sent to the queue" in ln
             ]
             if pending_lines_new and APPROVER_EMAILS:
                 clean_lines = [re.sub(r"\*\*", "", ln) for ln in pending_lines_new]
                 approver_mail_ok_new, approver_mail_err_new = send_notification_email(
                     APPROVER_EMAILS,
-                    f"[Nilorn Internal AI] {len(pending_lines_new)} đề xuất mới cần duyệt (Complaint mới, nhập tay)",
-                    "Có đề xuất mới đang chờ duyệt, vừa tạo từ complaint nhập tay:\n\n"
+                    f"[Nilorn Internal AI] {len(pending_lines_new)} new suggestion(s) need approval (New Complaint, manual entry)",
+                    "New suggestion(s) pending approval, just created from a manually entered complaint:\n\n"
                     + "\n".join(f"- {ln}" for ln in clean_lines)
-                    + f"\n\nVào app, tab 'Duyệt Taxonomy' để xem và xử lý: {REVIEW_APP_URL}",
+                    + f"\n\nOpen the app, 'Review Taxonomy' tab to view and process: {REVIEW_APP_URL}",
                 )
                 _log_notify_attempt(conn, new_complaint_id, APPROVER_EMAILS, approver_mail_ok_new, approver_mail_err_new)
+
+            # Báo CS chung (LUÔN gửi) + đúng người được ghi nhận (nếu có chọn) ngay khi complaint mới được tạo.
+            notify_new_complaint_recorded(conn, new_complaint_id, staff_id_new, so_po_new)
 
             st.session_state["new_complaint_result"] = {
                 "complaint_id": new_complaint_id,
@@ -4711,7 +4808,6 @@ if page == "new_complaint":
                 "supplier_suggestion": supplier_suggestion_new,
                 "brand": brand_choice,
                 "customer": new_customer_name.strip() if new_customer_name.strip() else customer_choice,
-                "machine": machine_choice,
                 "so_po": so_po_new,
                 "lot": lot_new,
                 "qty_inspected": qty_inspected_new,
@@ -4725,28 +4821,22 @@ if page == "new_complaint":
 
     result_new = st.session_state.get("new_complaint_result")
     if result_new:
-        st.success(f"Đã lưu complaint mới — mã hệ thống: `{result_new['complaint_id']}` / New complaint saved — system ID: `{result_new['complaint_id']}`")
+        st.success(f"New complaint saved — system ID: `{result_new['complaint_id']}`")
         for line in result_new["summary_lines"]:
             st.write(line)
 
         if result_new.get("supplier_suggestion"):
             st.info(
-                f"💡 Gợi ý nhà cung cấp liên quan (dựa theo lịch sử complaint trước đây): "
-                f"**{result_new['supplier_suggestion']}**. Bạn tự liên hệ nhà cung cấp này để yêu cầu điều tra nguyên nhân. "
-                f"/ Suggested related supplier (based on past complaint history): "
+                f"💡 Suggested related supplier (based on past complaint history): "
                 f"**{result_new['supplier_suggestion']}**. Contact them directly to request an investigation."
             )
         else:
             st.info(
-                "📤 Chưa xác định được nhà cung cấp liên quan — vào tab **'📊 Truy xuất dữ liệu'** để tra cứu thêm nếu cần. "
-                "/ No related supplier identified yet — check the **'📊 Data Lookup'** tab if needed."
+                "No related supplier identified yet — check the **'📊 Data Lookup'** tab if needed."
             )
 
         st.info(
-            "Muốn tải báo cáo (Word) cho complaint này — kể cả sau khi Root Cause/CAPA đã được duyệt xong — "
-            "sang tab **'📊 Truy xuất dữ liệu'** → mục **'Xuất báo cáo đầy đủ cho 1 complaint'**, chọn đúng complaint vừa nhập. "
-            "/ To download a Word report for this complaint — even after the Root Cause/CAPA get approved — go to "
-            "**'📊 Data Lookup'** → **'Export full report for a complaint'**, and select the complaint you just entered."
+            "To download a Word report for this complaint — even after the Root Cause/CAPA get approved — go to **'📊 Data Lookup'** → **'Export full report for a complaint'**, and select the complaint you just entered."
         )
 
 
@@ -4790,7 +4880,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
     period_col, picker_col, filler_col, dl_col = st.columns([1.3, 1.6, 1.9, 1.3])
     with period_col:
         period = st.radio(
-            "Khoảng thời gian", ["Month", "Quarter", "Year"],
+            "Time Period", ["Month", "Quarter", "Year"],
             horizontal=True, key="dashboard_period", label_visibility="collapsed",
         )
 
@@ -4835,7 +4925,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 
     with picker_col:
         picked_idx = st.selectbox(
-            "Chọn kỳ", list(range(len(period_options))),
+            "Select Period", list(range(len(period_options))),
             format_func=lambda i: period_options[i][0],
             key=f"period_picker_{period}", label_visibility="collapsed",
         )
@@ -4862,12 +4952,12 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
         except Exception as e:
-            st.caption(f"Lỗi Excel: {e}")
+            st.caption(f"Excel error: {e}")
 
     cols_db, rows_db = cols_db_early, rows_db_early
 
     if not rows_db:
-        st.info("Chưa có báo cáo nào từ nhà cung cấp. / No supplier reports yet.")
+        st.info("No supplier reports yet.")
     else:
         idx = {name: i for i, name in enumerate(cols_db)}
         period_rows = [
@@ -4902,7 +4992,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             st.markdown(stat_card_html("Suppliers involved", suppliers_involved, "gray"), unsafe_allow_html=True)
         with stat_col3:
             st.markdown(
-                stat_card_html("Chưa đóng hồ sơ / Not closed yet", missing_info, "coral" if missing_info else "teal"),
+                stat_card_html("Not closed yet", missing_info, "coral" if missing_info else "teal"),
                 unsafe_allow_html=True,
             )
 
@@ -4928,14 +5018,14 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             st.bar_chart(chart_df, use_container_width=True)
 
         with top5_col:
-            section_header("🏆", "Top 5 suppliers by complaints", "amber")
+            section_header("🏆", "Suppliers with the Most Complaints", "amber")
             supplier_counter = Counter()
             for r in period_rows:
                 name = r[idx["vendor_name_matched"]] or r[idx["supplier_name_raw"]]
                 supplier_counter[name] += 1
             top5 = supplier_counter.most_common(5)
             if not top5:
-                st.caption("Chưa có dữ liệu trong khoảng thời gian này.")
+                st.caption("No data in this time period.")
             else:
                 for rank, (name, count) in enumerate(top5, start=1):
                     badge_color = "coral" if rank == 1 else ("amber" if rank <= 3 else "teal")
@@ -4949,14 +5039,14 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     )
 
         st.markdown("---")
-        section_header("📥", "Recent complaints — bấm vào để xem chi tiết", "gray")
+        section_header("📥", "Recent complaints — click to view details", "gray")
 
         n_missing = sum(1 for r in period_rows if _compute_missing_tags(r))
         n_closed = len(period_rows) - n_missing
 
         filter_pick = st.radio(
-            "Lọc theo trạng thái",
-            [f"Chưa hoàn thành ({n_missing})", f"Closed ({n_closed})", f"Tất cả ({len(period_rows)})"],
+            "Filter by status",
+            [f"Not Closed ({n_missing})", f"Closed ({n_closed})", f"All ({len(period_rows)})"],
             horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
         )
 
@@ -4968,7 +5058,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             filtered_card_rows = period_rows
 
         if not filtered_card_rows:
-            st.caption("Không có complaint nào khớp bộ lọc hiện tại. / No complaints match the current filter.")
+            st.caption("No complaints match the current filter.")
 
         card_cols = st.columns(2)
         for i, r in enumerate(filtered_card_rows):
@@ -4989,8 +5079,8 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     )
                     st.caption(f"SO {r[idx['sales_order_no']]} · Item {r[idx['item_no']]}")
                     st.caption(
-                        f"Record Date {r[idx['record_date']].strftime('%d/%m/%Y') if r[idx['record_date']] else '(chưa rõ)'}"
+                        f"Record Date {r[idx['record_date']].strftime('%d/%m/%Y') if r[idx['record_date']] else '(unknown)'}"
                     )
-                    if st.button("Xem chi tiết →", key=f"card_detail_{r[idx['submission_id']]}"):
+                    if st.button("View details →", key=f"card_detail_{r[idx['submission_id']]}"):
                         st.session_state.selected_submission_id = str(r[idx["submission_id"]])
                         st.rerun()
