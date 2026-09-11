@@ -1962,7 +1962,8 @@ def fetch_legacy_complaints_for_dashboard(conn, cols):
 
 
 def update_submission_cs_fields(conn, submission_id, customer_name, client_code, bear_the_claim,
-                                 replacement_cost, replacement_cost_currency, recorded_by_staff_id=None):
+                                 replacement_cost, replacement_cost_currency, recorded_by_staff_id=None,
+                                 complaint_validity=None):
     with conn.cursor() as cur:
         cur.execute(
             """update supplier_submissions
@@ -1989,6 +1990,13 @@ def update_submission_cs_fields(conn, submission_id, customer_name, client_code,
                 )
             conn.commit()
             notify_recorded_by_assignment(conn, complaint_id, recorded_by_staff_id, so_po)
+        if complaint_validity is not None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "update complaint set complaint_validity = %s where complaint_id = %s;",
+                    (complaint_validity, complaint_id),
+                )
+            conn.commit()
         compute_and_update_complaint_status(conn, complaint_id)
 
 
@@ -2196,7 +2204,7 @@ def _fetch_submission_by_id(conn, submission_id):
                    ss.defect_image_urls, ss.defect_video_url,
                    ss.customer_name, ss.client_code, ss.bear_the_claim, ss.replacement_cost,
                    ss.replacement_cost_currency, ss.product_group, c.status as complaint_status, c.complaint_id,
-                   c.recorded_by, st.name as recorded_by_name,
+                   c.recorded_by, st.name as recorded_by_name, c.complaint_validity,
                    ss.prepared_by, ss.prepared_by_position, ss.signature_image_url
             from supplier_submissions ss
             left join complaint c on c.source_submission_id = ss.submission_id
@@ -2674,7 +2682,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
         st.write(f"**Vendor No.:** {vendor_code or '(unmatched)'}")
         st.write(f"**Product (Item No.):** {product_name or '(unknown)'}")
         st.write(f"**Product Group:** {product_group_val or '-'}")
-        st.write(f"**Recorded by:** {recorded_by_name or 'not assigned)'}")
+        st.write(f"**Recorded by:** {recorded_by_name or '(not assigned)'}")
         st.write(f"**Sales Order No.:** {so_po or '(empty)'}")
         st.write(f"**Purchase Order No.:** {lot_number or '(empty)'}")
         st.write(f"**Order Qty:** {qty_inspected} | **Defect Qty:** {qty_affected}")
@@ -2694,7 +2702,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                 customer_name_in = st.text_input("Customer", value=customer_name or "")
                 client_code_in = st.text_input("Client Code", value=client_code_suggested or "")
                 cs_staff_list_legacy = fetch_cs_staff(conn)
-                staff_labels_legacy = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_legacy]
+                staff_labels_legacy = ["-- not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_legacy]
                 current_recorded_by_label_legacy = next(
                     (f"{name} ({role})" for _, name, role in cs_staff_list_legacy if name == recorded_by_name),
                     None,
@@ -2813,7 +2821,8 @@ def render_submission_detail_page(conn, submission_id):
         st.write(f"**Purchase Order No.:** {sub['purchase_order_no']}")
         st.write(f"**Item No.:** {sub['item_no']}")
         st.write(f"**Product Group:** {sub.get('product_group') or '-'}")
-        st.write(f"**Recorded by:** {sub.get('recorded_by_name') or 'not assigned)'}")
+        st.write(f"**Recorded by:** {sub.get('recorded_by_name') or '(not assigned)'}")
+        st.write(f"**Assessment:** {sub.get('complaint_validity') or COMPLAINT_VALIDITY_OPTIONS[0]}")
         st.write(f"**Prepared by:** {sub.get('prepared_by') or '-'} ({sub.get('prepared_by_position') or '-'})")
         if sub.get("signature_image_url"):
             st.image(sub["signature_image_url"], width=150, caption="Signature")
@@ -2846,7 +2855,7 @@ def render_submission_detail_page(conn, submission_id):
                 customer_name_in = st.text_input("Customer", value=sub.get("customer_name") or "")
                 client_code_in = st.text_input("Client Code", value=sub.get("client_code") or "")
                 cs_staff_list_sub = fetch_cs_staff(conn)
-                staff_labels_sub = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_sub]
+                staff_labels_sub = ["-- not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list_sub]
                 current_recorded_by_label = None
                 if sub.get("recorded_by_name"):
                     current_recorded_by_label = next(
@@ -2880,6 +2889,13 @@ def render_submission_detail_page(conn, submission_id):
                     value=(sub.get("replacement_cost") == 0),
                     help="Check this to explicitly confirm zero, to avoid confusion with 'not filled in' — if left blank/0 WITHOUT checking, the system still treats it as undetermined and keeps the reminder badge.",
                 )
+            with validity_radio_box():
+                complaint_validity_sub = st.radio(
+                    "Assessment", COMPLAINT_VALIDITY_OPTIONS,
+                    index=COMPLAINT_VALIDITY_OPTIONS.index(sub.get("complaint_validity")) if sub.get("complaint_validity") in COMPLAINT_VALIDITY_OPTIONS else 0,
+                    horizontal=True,
+                    help="Update this if further investigation reveals a different conclusion than the initial entry.",
+                )
             if st.form_submit_button("Save"):
                 final_cost_in = 0.0 if no_cost_in else (replacement_cost_in or None)
                 recorded_by_staff_id_sub = (
@@ -2889,6 +2905,7 @@ def render_submission_detail_page(conn, submission_id):
                 update_submission_cs_fields(
                     conn, submission_id, customer_name_in, client_code_in,
                     bear_the_claim_in, final_cost_in, currency_in, recorded_by_staff_id_sub,
+                    complaint_validity_sub,
                 )
                 st.success("Saved.")
                 st.rerun()
@@ -2979,10 +2996,10 @@ st.set_page_config(page_title="Factory Copilot", layout="wide")
 # ------------------------------------------------------------
 st.markdown(
     """<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
 
 html, body, [class*="css"]  {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 .stApp {
     background: linear-gradient(160deg, #f3f0fb 0%, #f7f8fc 55%);
@@ -2991,40 +3008,95 @@ html, body, [class*="css"]  {
     background: transparent;
 }
 [data-testid="stVerticalBlockBorderWrapper"] {
-    border-radius: 14px !important;
+    border-radius: 18px !important;
     box-shadow: 0 1px 3px rgba(20, 20, 30, 0.05);
 }
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700 !important;
+    letter-spacing: -0.01em;
+}
 .stButton > button {
-    border-radius: 8px;
-    font-weight: 500;
-    transition: border-color 0.15s ease, color 0.15s ease;
+    border-radius: 999px;
+    font-weight: 700;
+    font-size: 15px;
+    padding: 10px 26px;
+    border: none;
+    background: #efedf9;
+    color: #2c2c2a;
+    box-shadow: 0 3px 0 rgba(20, 20, 30, 0.12);
+    transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
 }
 .stButton > button:hover {
-    border-color: #185fa5;
-    color: #185fa5;
+    background: #e3dff5;
+    color: #2c2c2a;
+    transform: translateY(1px);
+    box-shadow: 0 2px 0 rgba(20, 20, 30, 0.12);
+}
+.stButton > button:active {
+    transform: translateY(3px);
+    box-shadow: 0 0 0 rgba(20, 20, 30, 0.12);
+}
+.stButton > button[kind="primary"] {
+    background: #3ba24f;
+    color: #ffffff;
+    box-shadow: 0 4px 0 #297a38;
+}
+.stButton > button[kind="primary"]:hover {
+    background: #359147;
+    color: #ffffff;
+    box-shadow: 0 3px 0 #297a38;
+}
+.stButton > button[kind="primary"]:active {
+    box-shadow: 0 0 0 #297a38;
+}
+.stFormSubmitButton > button {
+    border-radius: 999px !important;
+    font-weight: 700 !important;
+    padding: 10px 26px !important;
+    background: #3ba24f !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 0 #297a38 !important;
+    transition: transform 0.08s ease, box-shadow 0.08s ease !important;
+}
+.stFormSubmitButton > button:hover {
+    background: #359147 !important;
+    transform: translateY(1px);
+    box-shadow: 0 3px 0 #297a38 !important;
+}
+.stFormSubmitButton > button:active {
+    transform: translateY(4px);
+    box-shadow: 0 0 0 #297a38 !important;
 }
 [data-testid="stTabs"] {
     background: #ffffff;
-    border-radius: 12px;
-    padding: 0.4rem 0.6rem 0;
+    border-radius: 999px;
+    padding: 6px 8px;
     box-shadow: 0 1px 3px rgba(20, 20, 30, 0.05);
     margin-bottom: 0.5rem;
+    display: inline-flex;
 }
 [data-testid="stTabs"] button[role="tab"] {
-    font-weight: 500;
+    font-weight: 700;
     font-size: 14.5px;
-    padding: 10px 18px;
+    padding: 10px 20px;
+    border-radius: 999px;
+    transition: background 0.15s ease, color 0.15s ease;
 }
 [data-testid="stTabs"] button[aria-selected="true"] {
-    background: #eef2f7;
-    border-radius: 8px 8px 0 0;
+    background: #7F77DD;
+    color: #ffffff !important;
+    border-radius: 999px;
 }
 .stTextInput input, .stTextArea textarea, .stNumberInput input, .stDateInput input {
-    border-radius: 8px;
+    border-radius: 14px;
+}
+.stSelectbox > div > div {
+    border-radius: 14px;
 }
 .fc-badge {
-    display: inline-block; padding: 2px 10px; border-radius: 12px;
-    font-size: 12px; font-weight: 600; text-transform: uppercase;
+    display: inline-block; padding: 4px 14px; border-radius: 999px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 0.02em; border: 1px solid transparent;
 }
 /* Zone card dùng chung — nền màu rõ ràng (không trong suốt) + viền trái đậm, để phân vùng lớn
@@ -3032,23 +3104,23 @@ html, body, [class*="css"]  {
    nên áp dụng được cho BẤT KỲ container nào ở BẤT KỲ tab nào, không cần khai CSS riêng từng chỗ. */
 div[class*="st-key-zone_blue_"] {
     background: #dfedfa; border-left: 4px solid #185fa5;
-    border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
+    border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 div[class*="st-key-zone_amber_"] {
     background: #f8e9cd; border-left: 4px solid #ba7517;
-    border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
+    border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 div[class*="st-key-zone_teal_"] {
     background: #d9f0e6; border-left: 4px solid #0f6e56;
-    border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
+    border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 div[class*="st-key-zone_coral_"] {
     background: #f9e2d8; border-left: 4px solid #993c1d;
-    border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
+    border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 div[class*="st-key-zone_gray_"] {
     background: #e9e7de; border-left: 4px solid #5f5e5a;
-    border-radius: 0 12px 12px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
+    border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 /* Ô chọn "Đánh giá ban đầu" (Lỗi thật / Lỗi khách hàng) — hiện thành 2 thẻ lớn rõ ràng thay vì
    nút radio nhỏ, xanh cho Nilorn, đỏ cho khách hàng, dùng chung 1 style cho mọi nơi xuất hiện ô này
@@ -3057,7 +3129,7 @@ div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] > div[role="radi
     display: flex; gap: 12px; margin-top: 2px;
 }
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label {
-    flex: 1; border: 2px solid #e5e3da; border-radius: 10px; padding: 14px 18px !important;
+    flex: 1; border: 2px solid #e5e3da; border-radius: 20px; padding: 14px 18px !important;
     margin: 0 !important; cursor: pointer; transition: all 0.15s ease; background: #ffffff;
 }
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label > div:first-child {
@@ -3171,9 +3243,9 @@ def section_header(icon, title, color="gray"):
     bg, text = SECTION_COLOR_STYLE.get(color, SECTION_COLOR_STYLE["gray"])
     st.markdown(
         f'<div style="display:flex;align-items:center;gap:10px;margin:1.75rem 0 0.9rem;">'
-        f'<span style="background:{bg};color:{text};min-width:34px;height:34px;border-radius:9px;'
-        f'display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">{icon}</span>'
-        f'<span style="font-size:1.08rem;font-weight:600;color:var(--text-primary, #2c2c2a);">{title}</span>'
+        f'<span style="background:{bg};color:{text};min-width:36px;height:36px;border-radius:50%;'
+        f'display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0;">{icon}</span>'
+        f'<span style="font-size:1.15rem;font-weight:700;color:var(--text-primary, #2c2c2a);">{title}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -3182,9 +3254,9 @@ def section_header(icon, title, color="gray"):
 def stat_card_html(label, value, color="gray"):
     bg, text = SECTION_COLOR_STYLE.get(color, SECTION_COLOR_STYLE["gray"])
     return (
-        f'<div style="background:{bg};border-radius:10px;padding:0.9rem 1rem;">'
+        f'<div style="background:{bg};border-radius:18px;padding:0.9rem 1rem;">'
         f'<p style="font-size:12px;color:{text};opacity:0.75;margin:0 0 4px;font-weight:500;">{label}</p>'
-        f'<p style="font-size:26px;font-weight:600;margin:0;color:{text};">{value}</p>'
+        f'<p style="font-size:26px;font-weight:700;margin:0;color:{text};">{value}</p>'
         f'</div>'
     )
 
@@ -3456,9 +3528,9 @@ if page == "taxonomy":
             "Use this for existing Defect codes that never got an image when they were first approved. Each code holds up to 3 images."
         )
         defect_codes_for_image = fetch_existing_codes(conn, "Defect")
-        defect_image_labels = ["select code --"] + [f"{c} — {n}" for c, n in defect_codes_for_image]
+        defect_image_labels = ["-- select code --"] + [f"{c} — {n}" for c, n in defect_codes_for_image]
         picked_defect_label = st.selectbox("Defect code", defect_image_labels, key="picked_defect_for_image")
-        if picked_defect_label != "select code --":
+        if picked_defect_label != "-- select code --":
             picked_defect_code = picked_defect_label.split(" — ")[0]
             existing_ref_imgs = fetch_defect_reference_images(conn, picked_defect_code)
             if existing_ref_imgs:
@@ -3538,7 +3610,7 @@ if page == "taxonomy":
                                 )
 
                 existing_codes = fetch_existing_codes(conn_f, kind)
-                code_options = ["select --"] + [f"{c} — {n}" for c, n in existing_codes]
+                code_options = ["-- select --"] + [f"{c} — {n}" for c, n in existing_codes]
 
                 action = st.radio(
                     "Decision",
@@ -3552,7 +3624,7 @@ if page == "taxonomy":
                     chosen = st.selectbox("Select the best matching code",
                                            code_options, key=f"match_{sid}")
                     if st.button("Confirm match", key=f"btn_match_{sid}"):
-                        if chosen == "select --":
+                        if chosen == "-- select --":
                             st.warning("You haven't selected a code yet.")
                         else:
                             code_only = chosen.split(" — ")[0]
@@ -3781,7 +3853,7 @@ if page == "data_lookup":
                 if capa_add_result and capa_add_result.get("complaint_id") == picked_id:
                     st.success(capa_add_result["message"])
                 capa_codes_add = fetch_existing_codes(conn, "CAPA")
-                capa_labels_add = ["select existing code --"] + [f"{c} — {n}" for c, n in capa_codes_add]
+                capa_labels_add = ["-- select existing code --"] + [f"{c} — {n}" for c, n in capa_codes_add]
                 with st.form(f"add_capa_form_{picked_id}"):
                     capa_choice_add = st.selectbox("Existing CAPA", capa_labels_add)
                     new_capa_text_add = st.text_input(
@@ -3791,7 +3863,7 @@ if page == "data_lookup":
                     date_proposed_add = st.date_input("CAPA proposed date")
                     submitted_capa_add = st.form_submit_button("Add CAPA")
                     if submitted_capa_add:
-                        if capa_choice_add != "select existing code --":
+                        if capa_choice_add != "-- select existing code --":
                             code_only_add = capa_choice_add.split(" — ")[0]
                             add_capa_action_to_complaint(conn, picked_id, code_only_add, date_proposed_add, responsible_add or None)
                             st.session_state["capa_add_result"] = {
@@ -4071,8 +4143,8 @@ if page == "ask_ai":
 
                     defect_options = fetch_existing_codes(conn, "Defect")
                     rc_options = fetch_existing_codes(conn, "Root Cause")
-                    defect_labels = ["unknown --"] + [f"{c} — {n}" for c, n in defect_options]
-                    rc_labels = ["unknown --"] + [f"{c} — {n}" for c, n in rc_options]
+                    defect_labels = ["-- unknown --"] + [f"{c} — {n}" for c, n in defect_options]
+                    rc_labels = ["-- unknown --"] + [f"{c} — {n}" for c, n in rc_options]
 
                     def _default_index(labels, code):
                         if not code:
@@ -4256,17 +4328,17 @@ if page == "new_complaint":
         customers = fetch_lookup(conn, "customer", "customer_id", "name")
         cs_staff_list = fetch_cs_staff(conn)
 
-    product_labels = ["unknown --"] + [name for _, name in products]
-    supplier_labels = ["unknown --"] + [name for _, name in suppliers]
-    machine_labels = ["unknown --"] + [name for _, name in machines]
-    customer_labels = ["unknown --"] + [name for _, name in customers]
-    staff_labels = ["not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list]
-    brand_labels = ["unknown --"] + BRANDS
+    product_labels = ["-- unknown --"] + [name for _, name in products]
+    supplier_labels = ["-- unknown --"] + [name for _, name in suppliers]
+    machine_labels = ["-- unknown --"] + [name for _, name in machines]
+    customer_labels = ["-- unknown --"] + [name for _, name in customers]
+    staff_labels = ["-- not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list]
+    brand_labels = ["-- unknown --"] + BRANDS
 
     rc_codes = fetch_existing_codes(conn, "Root Cause")
     capa_codes = fetch_existing_codes(conn, "CAPA")
-    rc_labels = ["let AI classify --"] + [f"{c} — {n}" for c, n in rc_codes]
-    capa_labels = ["none --"] + [f"{c} — {n}" for c, n in capa_codes]
+    rc_labels = ["-- let AI classify --"] + [f"{c} — {n}" for c, n in rc_codes]
+    capa_labels = ["-- none --"] + [f"{c} — {n}" for c, n in capa_codes]
 
     with zone_card("amber"):
         st.caption(
@@ -4403,7 +4475,7 @@ if page == "new_complaint":
                 if f"prefill_complaint_extra_rc_{i}_code" in st.session_state:
                     prefill_code_i = st.session_state.pop(f"prefill_complaint_extra_rc_{i}_code")
                     match_label_i = next((lbl for lbl in rc_labels if lbl.startswith(prefill_code_i + " —")), None)
-                    st.session_state[f"extra_rc_choice_{i}"] = match_label_i or "let AI classify --"
+                    st.session_state[f"extra_rc_choice_{i}"] = match_label_i or "-- let AI classify --"
                 if f"prefill_complaint_extra_rc_{i}_new" in st.session_state:
                     st.session_state[f"extra_rc_text_{i}"] = st.session_state.pop(f"prefill_complaint_extra_rc_{i}_new")
                 ec1, ec2 = st.columns(2)
@@ -4442,7 +4514,7 @@ if page == "new_complaint":
                 if f"prefill_complaint_extra_capa_{i}_code" in st.session_state:
                     prefill_code_i = st.session_state.pop(f"prefill_complaint_extra_capa_{i}_code")
                     match_label_i = next((lbl for lbl in capa_labels if lbl.startswith(prefill_code_i + " —")), None)
-                    st.session_state[f"extra_capa_choice_{i}"] = match_label_i or "none --"
+                    st.session_state[f"extra_capa_choice_{i}"] = match_label_i or "-- none --"
                 if f"prefill_complaint_extra_capa_{i}_new" in st.session_state:
                     st.session_state[f"extra_capa_text_{i}"] = st.session_state.pop(f"prefill_complaint_extra_capa_{i}_new")
                 if f"prefill_complaint_extra_capa_{i}_resp" in st.session_state:
