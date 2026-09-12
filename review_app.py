@@ -3312,21 +3312,22 @@ def render_paste_zone(target_label_substring, height=100):
     label_js = json.dumps(target_label_substring)
     components.html(
         f"""
-        <p style="margin:0 0 6px;font-size:13px;color:#73726c;font-family:-apple-system,sans-serif;">
+        <p style="margin:0 0 6px;font-size:13px;color:#5f5e5a;font-family:'Fredoka',-apple-system,sans-serif;font-weight:600;">
             📋 Click the box below, then press <b>Ctrl+V</b> to paste a screenshot (e.g. Win+Shift+S)
         </p>
         <div id="fc-paste-zone" contenteditable="true" spellcheck="false" style="
-            border: 1.5px dashed #9c9a92; border-radius: 8px; padding: 10px 14px;
-            text-align: center; cursor: text; color: #9c9a92;
-            font-family: -apple-system, sans-serif; font-size: 13px; outline: none;
-            transition: border-color 0.15s ease, color 0.15s ease;
-        ">(click here)</div>
+            border: 2.5px dashed #7F77DD; border-radius: 18px; padding: 16px 14px;
+            background: #f0eefc;
+            text-align: center; cursor: text; color: #5b52c9; font-weight: 600;
+            font-family: 'Fredoka', -apple-system, sans-serif; font-size: 14px; outline: none;
+            transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+        ">📎 (click here)</div>
         <div id="fc-paste-status" style="margin-top:4px;font-size:12px;font-family:-apple-system,sans-serif;"></div>
         <script>
         const targetLabel = {label_js};
         const zone = document.getElementById('fc-paste-zone');
         const status = document.getElementById('fc-paste-status');
-        const placeholder = '(click here)';
+        const placeholder = '📎 (click here)';
 
         function findTargetInput() {{
             const parentDoc = window.parent.document;
@@ -3340,13 +3341,17 @@ def render_paste_zone(target_label_substring, height=100):
         }}
 
         zone.addEventListener('focus', () => {{
-            zone.style.borderColor = '#185fa5';
-            zone.style.color = '#185fa5';
+            zone.style.borderColor = '#5b52c9';
+            zone.style.color = '#5b52c9';
+            zone.style.background = '#e3dff5';
+            zone.style.boxShadow = '0 0 0 3px rgba(127,119,221,0.25)';
             if (zone.innerText.trim() === placeholder) {{ zone.innerText = ''; }}
         }});
         zone.addEventListener('blur', () => {{
-            zone.style.borderColor = '#9c9a92';
-            zone.style.color = '#9c9a92';
+            zone.style.borderColor = '#7F77DD';
+            zone.style.color = '#5b52c9';
+            zone.style.background = '#f0eefc';
+            zone.style.boxShadow = 'none';
             if (!zone.innerText.trim()) {{ zone.innerText = placeholder; }}
         }});
         zone.addEventListener('paste', async (e) => {{
