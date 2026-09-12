@@ -3124,6 +3124,11 @@ div[class*="st-key-zone_gray_"] {
     background: #e9e7de; border-left: 4px solid #5f5e5a;
     border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
+/* Khung "Quick-create from an email" — tô nền tím nhạt để nổi bật ngay khi vào tab, khớp màu
+   với ô dán ảnh highlight bên trong. */
+div[class*="st-key-quick_create_email_box"] {
+    background: #f0eefc; border-radius: 18px; padding: 0.6rem 1.2rem 1.1rem; margin-bottom: 0.8rem;
+}
 /* Ô chọn "Đánh giá ban đầu" (Lỗi thật / Lỗi khách hàng) — hiện thành 2 thẻ lớn rõ ràng thay vì
    nút radio nhỏ, xanh cho Nilorn, đỏ cho khách hàng, dùng chung 1 style cho mọi nơi xuất hiện ô này
    (form Complaint mới, mục Bổ sung thông tin ở trang chi tiết) nhờ đặt tên key cùng tiền tố. */
@@ -3301,33 +3306,42 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
     )
 
 
-def render_paste_zone(target_label_substring, height=100):
+def render_paste_zone(target_label_substring, height=100, highlight=False):
     """Vùng dán ảnh Ctrl+V — tự tìm ĐÚNG ô upload cần điền dựa theo 1 đoạn nhãn duy nhất của ô đó
     (target_label_substring), thay vì lấy ô upload ĐẦU TIÊN tìm thấy trên trang. Cần thiết vì app
     này có NHIỀU ô tải ảnh khác nhau cùng lúc (ảnh minh họa lỗi, ảnh chụp email, ảnh mẫu Defect...)
     — nếu chỉ lấy ô đầu tiên sẽ dễ dán nhầm sang ô khác. / A Ctrl+V paste zone that finds the
     CORRECT upload field by matching a unique substring of its label, instead of grabbing the
     first upload field found on the page — necessary since this app has multiple image uploaders
-    active at once."""
+    active at once. highlight=True dùng cho ô quan trọng cần chú ý ngay (ví dụ Quick-create từ
+    email), highlight=False (mặc định) dùng style trung tính cho các ô còn lại."""
     label_js = json.dumps(target_label_substring)
+    if highlight:
+        border_color, text_color, bg_color = "#7F77DD", "#5b52c9", "#f0eefc"
+        focus_border, focus_text, focus_bg = "#5b52c9", "#5b52c9", "#e3dff5"
+        border_width, radius, padding, font_weight = "2.5px", "18px", "16px 14px", "600"
+    else:
+        border_color, text_color, bg_color = "#9c9a92", "#9c9a92", "transparent"
+        focus_border, focus_text, focus_bg = "#185fa5", "#185fa5", "transparent"
+        border_width, radius, padding, font_weight = "1.5px", "8px", "10px 14px", "400"
     components.html(
         f"""
-        <p style="margin:0 0 6px;font-size:13px;color:#5f5e5a;font-family:'Fredoka',-apple-system,sans-serif;font-weight:600;">
+        <p style="margin:0 0 6px;font-size:13px;color:#73726c;font-family:-apple-system,sans-serif;">
             📋 Click the box below, then press <b>Ctrl+V</b> to paste a screenshot (e.g. Win+Shift+S)
         </p>
         <div id="fc-paste-zone" contenteditable="true" spellcheck="false" style="
-            border: 2.5px dashed #7F77DD; border-radius: 18px; padding: 16px 14px;
-            background: #f0eefc;
-            text-align: center; cursor: text; color: #5b52c9; font-weight: 600;
-            font-family: 'Fredoka', -apple-system, sans-serif; font-size: 14px; outline: none;
-            transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-        ">📎 (click here)</div>
+            border: {border_width} dashed {border_color}; border-radius: {radius}; padding: {padding};
+            background: {bg_color}; font-weight: {font_weight};
+            text-align: center; cursor: text; color: {text_color};
+            font-family: -apple-system, sans-serif; font-size: 13px; outline: none;
+            transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+        ">(click here)</div>
         <div id="fc-paste-status" style="margin-top:4px;font-size:12px;font-family:-apple-system,sans-serif;"></div>
         <script>
         const targetLabel = {label_js};
         const zone = document.getElementById('fc-paste-zone');
         const status = document.getElementById('fc-paste-status');
-        const placeholder = '📎 (click here)';
+        const placeholder = '(click here)';
 
         function findTargetInput() {{
             const parentDoc = window.parent.document;
@@ -3341,17 +3355,15 @@ def render_paste_zone(target_label_substring, height=100):
         }}
 
         zone.addEventListener('focus', () => {{
-            zone.style.borderColor = '#5b52c9';
-            zone.style.color = '#5b52c9';
-            zone.style.background = '#e3dff5';
-            zone.style.boxShadow = '0 0 0 3px rgba(127,119,221,0.25)';
+            zone.style.borderColor = '{focus_border}';
+            zone.style.color = '{focus_text}';
+            zone.style.background = '{focus_bg}';
             if (zone.innerText.trim() === placeholder) {{ zone.innerText = ''; }}
         }});
         zone.addEventListener('blur', () => {{
-            zone.style.borderColor = '#7F77DD';
-            zone.style.color = '#5b52c9';
-            zone.style.background = '#f0eefc';
-            zone.style.boxShadow = 'none';
+            zone.style.borderColor = '{border_color}';
+            zone.style.color = '{text_color}';
+            zone.style.background = '{bg_color}';
             if (!zone.innerText.trim()) {{ zone.innerText = placeholder; }}
         }});
         zone.addEventListener('paste', async (e) => {{
@@ -4237,76 +4249,77 @@ if page == "new_complaint":
         "coral",
     )
 
-    with st.expander(
-        "Quick-create from an email (paste text or upload a screenshot)", expanded=True,
-    ):
-        email_text_input = st.text_area(
-            "Paste the full email content here",
-            height=150, key="email_paste_input",
-        )
-        email_image_input = st.file_uploader(
-            "...or upload email screenshot(s) / real defect photo(s) (multiple allowed)",
-            type=["png", "jpg", "jpeg"], key="email_image_input", accept_multiple_files=True,
-            help="You can select multiple images at once (e.g. an email screenshot plus real defect photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
-        )
-        render_paste_zone("upload email screenshot")
-        if st.button("Extract from email", key="btn_extract_email"):
-            if not email_text_input.strip() and not email_image_input:
-                st.warning("You haven't pasted any content or uploaded an image.")
-            else:
-                with st.spinner("AI is reading the email..."):
-                    ai_client = get_ai_client()
-                    (product_names, customer_names, supplier_names,
-                     staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
-                    conn = ensure_connection()
-                    if email_image_input:
-                        images_for_ai = [
-                            {
-                                "b64": base64.b64encode(f.getvalue()).decode("utf-8"),
-                                "media_type": f.type or "image/png",
-                            }
-                            for f in email_image_input[:5]
-                        ]
-                        if len(email_image_input) > 5:
-                            st.warning(
-                                f"You uploaded {len(email_image_input)}You uploaded {len(email_image_input)} images — only the first 5 are sent to AI."
+    with st.container(key="quick_create_email_box"):
+        with st.expander(
+            "Quick-create from an email (paste text or upload a screenshot)", expanded=True,
+        ):
+            email_text_input = st.text_area(
+                "Paste the full email content here",
+                height=150, key="email_paste_input",
+            )
+            email_image_input = st.file_uploader(
+                "...or upload email screenshot(s) / real defect photo(s) (multiple allowed)",
+                type=["png", "jpg", "jpeg"], key="email_image_input", accept_multiple_files=True,
+                help="You can select multiple images at once (e.g. an email screenshot plus real defect photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
+            )
+            render_paste_zone("upload email screenshot", highlight=True)
+            if st.button("Extract from email", key="btn_extract_email"):
+                if not email_text_input.strip() and not email_image_input:
+                    st.warning("You haven't pasted any content or uploaded an image.")
+                else:
+                    with st.spinner("AI is reading the email..."):
+                        ai_client = get_ai_client()
+                        (product_names, customer_names, supplier_names,
+                         staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
+                        conn = ensure_connection()
+                        if email_image_input:
+                            images_for_ai = [
+                                {
+                                    "b64": base64.b64encode(f.getvalue()).decode("utf-8"),
+                                    "media_type": f.type or "image/png",
+                                }
+                                for f in email_image_input[:5]
+                            ]
+                            if len(email_image_input) > 5:
+                                st.warning(
+                                    f"You uploaded {len(email_image_input)}You uploaded {len(email_image_input)} images — only the first 5 are sent to AI."
+                                )
+                            fields = extract_complaint_from_email(
+                                ai_client, datetime.now().strftime("%Y-%m-%d"),
+                                product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
+                                images=images_for_ai,
                             )
-                        fields = extract_complaint_from_email(
-                            ai_client, datetime.now().strftime("%Y-%m-%d"),
-                            product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
-                            images=images_for_ai,
+                        else:
+                            fields = extract_complaint_from_email(
+                                ai_client, datetime.now().strftime("%Y-%m-%d"),
+                                product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
+                                email_text=email_text_input.strip(),
+                            )
+                    matched_bits = apply_complaint_prefill_fields(fields)
+                    if matched_bits:
+                        st.session_state["email_extract_result"] = (
+                            "Email read and prefilled: " + ", ".join(matched_bits) + "Read the email and prefilled: " + ", ".join(matched_bits) +
+                            " — review the fields below before saving."
                         )
                     else:
-                        fields = extract_complaint_from_email(
-                            ai_client, datetime.now().strftime("%Y-%m-%d"),
-                            product_names, customer_names, supplier_names, staff_labels, rc_list, capa_list,
-                            email_text=email_text_input.strip(),
+                        st.session_state["email_extract_result"] = (
+                            "Read the email but couldn't match any field to real data — the description was prefilled, please fill in the rest."
                         )
-                matched_bits = apply_complaint_prefill_fields(fields)
-                if matched_bits:
-                    st.session_state["email_extract_result"] = (
-                        "Email read and prefilled: " + ", ".join(matched_bits) + "Read the email and prefilled: " + ", ".join(matched_bits) +
-                        " — review the fields below before saving."
-                    )
-                else:
-                    st.session_state["email_extract_result"] = (
-                        "Read the email but couldn't match any field to real data — the description was prefilled, please fill in the rest."
-                    )
 
-                supplier_suggestion = fields.get("supplier")
-                suggestion_source = "email" if supplier_suggestion else None
-                if not supplier_suggestion and fields.get("product"):
-                    supplier_suggestion = suggest_supplier_for_product(conn, fields["product"])
-                    suggestion_source = "history" if supplier_suggestion else None
-                st.session_state["email_extract_context"] = {
-                    "desc": fields.get("desc"),
-                    "product": fields.get("product"),
-                    "so_po": fields.get("so_po"),
-                    "quantity": fields.get("quantity"),
-                    "supplier_suggestion": supplier_suggestion,
-                    "suggestion_source": suggestion_source,
-                }
-                st.rerun()
+                    supplier_suggestion = fields.get("supplier")
+                    suggestion_source = "email" if supplier_suggestion else None
+                    if not supplier_suggestion and fields.get("product"):
+                        supplier_suggestion = suggest_supplier_for_product(conn, fields["product"])
+                        suggestion_source = "history" if supplier_suggestion else None
+                    st.session_state["email_extract_context"] = {
+                        "desc": fields.get("desc"),
+                        "product": fields.get("product"),
+                        "so_po": fields.get("so_po"),
+                        "quantity": fields.get("quantity"),
+                        "supplier_suggestion": supplier_suggestion,
+                        "suggestion_source": suggestion_source,
+                    }
+                    st.rerun()
 
     email_extract_result = st.session_state.pop("email_extract_result", None)
     if email_extract_result:
