@@ -4332,7 +4332,7 @@ if page == "new_complaint":
                 help="You can select multiple images at once (e.g. an email screenshot plus real defect photos) — AI reads all of them together for more accurate results. Max 5 images per run.",
             )
             render_paste_zone("upload email screenshot", highlight=True)
-            if st.button("Extract from email", key="btn_extract_email"):
+            if st.button("🔎 Extract from email", key="btn_extract_email", type="primary"):
                 if not email_text_input.strip() and not email_image_input:
                     st.warning("You haven't pasted any content or uploaded an image.")
                 else:
