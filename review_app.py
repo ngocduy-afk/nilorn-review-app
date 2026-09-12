@@ -3124,6 +3124,20 @@ div[class*="st-key-zone_gray_"] {
     background: #e9e7de; border-left: 4px solid #5f5e5a;
     border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
+/* Card "enterprise sạch" — CHỈ dùng cho New Complaint + trang chi tiết complaint. Nền trắng,
+   viền mảnh xám nhạt, bo góc vừa phải, bóng đổ rất nhẹ — không tô màu lớn như zone_card. */
+div[class*="st-key-clean_card_plain_"] {
+    background: #ffffff; border: 1px solid #e5e3da; border-radius: 12px;
+    padding: 1rem 1.3rem 1.3rem; margin-bottom: 0.9rem;
+    box-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+}
+/* Biến thể nhấn nhẹ cho Root Cause & CAPA — quan trọng hơn các phần khác theo đúng bản thiết kế
+   tham khảo, nên có viền trái màu hổ phách thay vì viền xám trung tính. */
+div[class*="st-key-clean_card_amber_"] {
+    background: #fffaf0; border: 1px solid #e8dcc0; border-left: 3px solid #b8860b;
+    border-radius: 12px; padding: 1rem 1.3rem 1.3rem; margin-bottom: 0.9rem;
+    box-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+}
 /* Khung "Quick-create from an email" — tô nền tím nhạt để nổi bật ngay khi vào tab, khớp màu
    với ô dán ảnh highlight bên trong. */
 div[class*="st-key-quick_create_email_box"] {
@@ -3440,6 +3454,39 @@ def zone_card(color="gray"):
     n = _zone_card_counters.get(color, 0)
     _zone_card_counters[color] = n + 1
     return st.container(key=f"zone_{color}_{n}")
+
+
+def clean_section_header(number, icon, title):
+    """Tiêu đề đánh số kiểu 'enterprise sạch' — dùng CHUNG với clean_card(), chỉ trong New Complaint
+    + trang chi tiết complaint. Số thứ tự + icon nhỏ + chữ đậm màu navy, không dùng badge tròn màu
+    lớn như section_header() thường dùng ở phần còn lại của app."""
+    st.markdown(
+        f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:0.9rem;">'
+        f'<span style="background:#eef2f7;color:#1a2b4a;width:24px;height:24px;border-radius:6px;'
+        f'display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;">{number}</span>'
+        f'<span style="font-size:15px;">{icon}</span>'
+        f'<span style="font-size:1.02rem;font-weight:700;color:#1a2b4a;">{title}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+_clean_card_counter = [0]
+
+
+def clean_card(accent=None):
+    """Card kiểu 'enterprise sạch' (nền trắng, viền mảnh, bo góc, không tô màu lớn) — CHỈ dùng
+    riêng cho tab New Complaint và trang chi tiết complaint, theo yêu cầu tách phong cách riêng
+    khỏi phần còn lại của app (vẫn giữ Yatzy tươi sáng). accent (tùy chọn): 'amber' cho phần Root
+    Cause & CAPA để nhấn nhẹ đây là khu vực quan trọng hơn, theo đúng tinh thần bản thiết kế tham
+    khảo. / A clean white-card style (subtle border, rounded corners, no big color fill) — used
+    ONLY in the New Complaint tab and complaint detail pages per the scoped restyle request.
+    accent='amber' gives Root Cause & CAPA a slightly stronger visual weight, matching the
+    reference design's emphasis on that section."""
+    n = _clean_card_counter[0]
+    _clean_card_counter[0] += 1
+    key = f"clean_card_{accent or 'plain'}_{n}"
+    return st.container(key=key)
 
 
 try:
@@ -4389,8 +4436,8 @@ if page == "new_complaint":
             st.caption(
                 "The fields below were prefilled from your question in the 'Ask AI' tab — review before saving."
             )
-        with zone_card("teal"):
-            section_header("📝", "Issue description & photo", "teal")
+        with clean_card():
+            clean_section_header(1, "📝", "Initial Description & Update")
             desc = st.text_area(
                 "Issue description",
                 height=100, key="newcomplaint_desc_value",
@@ -4412,8 +4459,8 @@ if page == "new_complaint":
 
         col1, col2 = st.columns(2)
         with col1:
-            with zone_card("blue"):
-                section_header("📦", "Product & supplier", "blue")
+            with clean_card():
+                clean_section_header(2, "📦", "Product & Supplier")
                 if "prefill_complaint_date" in st.session_state:
                     st.session_state["newcomplaint_date_value"] = st.session_state.pop("prefill_complaint_date")
                 date_opened_new = st.date_input("Date occurred (required)", key="newcomplaint_date_value")
@@ -4438,8 +4485,8 @@ if page == "new_complaint":
                         st.session_state["newcomplaint_brand_value"] = match_label
                 brand_choice = st.selectbox("Brand", brand_labels, key="newcomplaint_brand_value")
         with col2:
-            with zone_card("coral"):
-                section_header("🧾", "Order & customer", "coral")
+            with clean_card():
+                clean_section_header(3, "🧾", "Order & Customer")
                 if "prefill_complaint_so_po" in st.session_state:
                     st.session_state["newcomplaint_so_po_value"] = st.session_state.pop("prefill_complaint_so_po")
                 so_po_new = st.text_input("Sales Order No.", key="newcomplaint_so_po_value")
@@ -4453,8 +4500,8 @@ if page == "new_complaint":
                 customer_choice = st.selectbox("Customer", customer_labels, key="newcomplaint_customer_value")
                 new_customer_name = st.text_input("...or enter a NEW customer name")
 
-        with zone_card("gray"):
-            section_header("👤", "Recorded by & quantities", "gray")
+        with clean_card():
+            clean_section_header(4, "👤", "Recorded by & Quantities")
             if "prefill_complaint_staff" in st.session_state:
                 match_label = find_best_label_match(st.session_state.pop("prefill_complaint_staff"), staff_labels)
                 if match_label:
@@ -4472,8 +4519,8 @@ if page == "new_complaint":
                 )
 
         st.markdown("---")
-        with zone_card("amber"):
-            section_header("🔎", "Root Cause & CAPA (optional)", "amber")
+        with clean_card(accent="amber"):
+            clean_section_header(5, "🔎", "Root Cause & CAPA (optional)")
             st.caption(
                 "Fill in if known, skip otherwise (AI will auto-classify the root cause by default)."
             )
