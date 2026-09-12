@@ -4331,10 +4331,10 @@ if page == "new_complaint":
         customers = fetch_lookup(conn, "customer", "customer_id", "name")
         cs_staff_list = fetch_cs_staff(conn)
 
-    product_labels = ["-- unknown --"] + [name for _, name in products]
+    product_labels = ["-- unknown --"] + [name for _, name in products] + ["+ Add new product..."]
     supplier_labels = ["-- unknown --"] + [name for _, name in suppliers]
     machine_labels = ["-- unknown --"] + [name for _, name in machines]
-    customer_labels = ["-- unknown --"] + [name for _, name in customers]
+    customer_labels = ["-- unknown --"] + [name for _, name in customers] + ["+ Add new customer..."]
     staff_labels = ["-- not selected --"] + [f"{name} ({role})" for _, name, role in cs_staff_list]
     brand_labels = ["-- unknown --"] + BRANDS
 
@@ -4343,7 +4343,31 @@ if page == "new_complaint":
     rc_labels = ["-- let AI classify --"] + [f"{c} — {n}" for c, n in rc_codes]
     capa_labels = ["-- none --"] + [f"{c} — {n}" for c, n in capa_codes]
 
-    with zone_card("amber"):
+    with zone_card("blue"):
+        section_header("📦", "Product & Customer", "blue")
+        pc_col1, pc_col2 = st.columns(2)
+        with pc_col1:
+            if "prefill_complaint_product" in st.session_state:
+                match_label = find_best_label_match(st.session_state.pop("prefill_complaint_product"), product_labels)
+                if match_label:
+                    st.session_state["newcomplaint_product_value"] = match_label
+            product_choice = st.selectbox("Product", product_labels, key="newcomplaint_product_value")
+            new_product_name = ""
+            new_product_group = PRODUCT_GROUPS[0]
+            if product_choice == "+ Add new product...":
+                new_product_name = st.text_input("New product name/code", key="newcomplaint_new_product_name")
+                new_product_group = st.selectbox("Product Group for the new product", PRODUCT_GROUPS, key="newcomplaint_new_product_group")
+        with pc_col2:
+            if "prefill_complaint_customer" in st.session_state:
+                match_label = find_best_label_match(st.session_state.pop("prefill_complaint_customer"), customer_labels)
+                if match_label:
+                    st.session_state["newcomplaint_customer_value"] = match_label
+            customer_choice = st.selectbox("Customer", customer_labels, key="newcomplaint_customer_value")
+            new_customer_name = ""
+            if customer_choice == "+ Add new customer...":
+                new_customer_name = st.text_input("New customer name", key="newcomplaint_new_customer_name")
+
+    with st.expander("Other root causes / CAPAs (optional — skip if this complaint only has one of each)"):
         st.caption(
             "Extra Root Cause & CAPA counts (if known upfront) — placed outside the form due to a Streamlit limitation."
         )
@@ -4400,14 +4424,6 @@ if page == "new_complaint":
                     st.session_state["newcomplaint_date_value"] = st.session_state.pop("prefill_complaint_date")
                 date_opened_new = st.date_input("Date occurred (required)", key="newcomplaint_date_value")
 
-                if "prefill_complaint_product" in st.session_state:
-                    match_label = find_best_label_match(st.session_state.pop("prefill_complaint_product"), product_labels)
-                    if match_label:
-                        st.session_state["newcomplaint_product_value"] = match_label
-                product_choice = st.selectbox("Product (if existing)", product_labels, key="newcomplaint_product_value")
-                new_product_name = st.text_input("...or enter a NEW product name/code")
-                new_product_group = st.selectbox("Product Group for the new product (only if entered above)", PRODUCT_GROUPS)
-
                 if "prefill_complaint_supplier" in st.session_state:
                     match_label = find_best_label_match(st.session_state.pop("prefill_complaint_supplier"), supplier_labels)
                     if match_label:
@@ -4428,12 +4444,6 @@ if page == "new_complaint":
                 if "prefill_complaint_lot" in st.session_state:
                     st.session_state["newcomplaint_lot_value"] = st.session_state.pop("prefill_complaint_lot")
                 lot_new = st.text_input("Purchase Order No.", key="newcomplaint_lot_value")
-                if "prefill_complaint_customer" in st.session_state:
-                    match_label = find_best_label_match(st.session_state.pop("prefill_complaint_customer"), customer_labels)
-                    if match_label:
-                        st.session_state["newcomplaint_customer_value"] = match_label
-                customer_choice = st.selectbox("Customer", customer_labels, key="newcomplaint_customer_value")
-                new_customer_name = st.text_input("...or enter a NEW customer name")
 
         with zone_card("gray"):
             section_header("👤", "Recorded by & quantities", "gray")
@@ -4540,7 +4550,10 @@ if page == "new_complaint":
             st.warning("You haven't entered an issue description.")
         else:
             ai_client = get_ai_client()
-            product_id_new = None if product_choice.startswith("--") else products[product_labels.index(product_choice) - 1][0]
+            product_id_new = (
+                None if product_choice.startswith("--") or product_choice == "+ Add new product..."
+                else products[product_labels.index(product_choice) - 1][0]
+            )
 
             if new_product_name.strip():
                 typed_norm = normalize_code(new_product_name)
@@ -4550,7 +4563,7 @@ if page == "new_complaint":
                 )
                 if existing_match:
                     product_id_new = existing_match
-                    st.info(f"Product '{new_product_name.strip()}Product already exists (even if formatted differently) — reusing it, not creating a duplicate.")
+                    st.info(f"Product '{new_product_name.strip()}' already exists (even if formatted differently) — reusing it, not creating a duplicate.")
                 else:
                     close_matches = [
                         name for _, name in products
@@ -4572,7 +4585,10 @@ if page == "new_complaint":
 
             supplier_id_new = None if supplier_choice.startswith("--") else suppliers[supplier_labels.index(supplier_choice) - 1][0]
             machine_id_new = None
-            customer_id_new = None if customer_choice.startswith("--") else customers[customer_labels.index(customer_choice) - 1][0]
+            customer_id_new = (
+                None if customer_choice.startswith("--") or customer_choice == "+ Add new customer..."
+                else customers[customer_labels.index(customer_choice) - 1][0]
+            )
 
             if new_customer_name.strip():
                 typed_norm_c = normalize_code(new_customer_name)
@@ -4582,7 +4598,7 @@ if page == "new_complaint":
                 )
                 if existing_match_c:
                     customer_id_new = existing_match_c
-                    st.info(f"Customer '{new_customer_name.strip()}Customer already exists — reusing it, not creating a duplicate.")
+                    st.info(f"Customer '{new_customer_name.strip()}' already exists — reusing it, not creating a duplicate.")
                 else:
                     close_matches_c = [
                         name for _, name in customers
@@ -5125,7 +5141,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
         )
 
-        if filter_pick.startswith("Chưa hoàn thành"):
+        if filter_pick.startswith("Not Closed"):
             filtered_card_rows = [r for r in period_rows if _compute_missing_tags(r)]
         elif filter_pick.startswith("Closed"):
             filtered_card_rows = [r for r in period_rows if not _compute_missing_tags(r)]
