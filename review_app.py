@@ -1742,7 +1742,7 @@ def apply_complaint_prefill_fields(fields):
 
 
 def render_create_complaint_suggestion(conn, question, button_key):
-    if st.button("📝 Create New Complaint with this description", key=button_key):
+    if st.button("📝 Create New Complaint with this description", key=button_key, type="primary"):
         with st.spinner("AI is preparing the description..."):
             ai_client = get_ai_client()
             (product_names, customer_names, supplier_names,
@@ -2760,6 +2760,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
     with col_word:
         st.download_button(
             "Download Word",
+            type="primary",
             data=export_word_report(full_report_legacy),
             file_name=f"Complaint_{complaint_id}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -2767,6 +2768,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
     with col_pdf:
         st.download_button(
             "⬇️ Download PDF (English)",
+            type="primary",
             data=export_complaint_report_pdf(full_report_legacy),
             file_name=f"Complaint_{complaint_id}.pdf",
             mime="application/pdf",
@@ -2779,7 +2781,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
             "Defect photo", type=["png", "jpg", "jpeg"],
             key=f"attach_defect_photo_legacy_{complaint_id}",
         )
-        if new_defect_photo_legacy is not None and st.button("Save photo", key=f"btn_save_defect_photo_legacy_{complaint_id}"):
+        if new_defect_photo_legacy is not None and st.button("Save photo", key=f"btn_save_defect_photo_legacy_{complaint_id}", type="primary"):
             photo_b64_legacy = base64.b64encode(new_defect_photo_legacy.getvalue()).decode("utf-8")
             with conn.cursor() as cur:
                 cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64_legacy, complaint_id))
@@ -2937,7 +2939,7 @@ def render_submission_detail_page(conn, submission_id):
             "New video (leave blank to keep current)", type=["mp4", "mov", "avi", "webm"],
             key=f"replace_video_{submission_id}",
         )
-        if st.button("🔄 Update photo/video", key=f"btn_replace_media_{submission_id}"):
+        if st.button("🔄 Update photo/video", key=f"btn_replace_media_{submission_id}", type="primary"):
             if not new_images and not new_video:
                 st.warning("No photo/video selected to replace.")
             else:
@@ -2971,6 +2973,7 @@ def render_submission_detail_page(conn, submission_id):
         try:
             st.download_button(
                 "Download Word", data=export_submission_word(sub),
+                type="primary",
                 file_name=f"Report_{sub['sales_order_no']}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
@@ -2980,6 +2983,7 @@ def render_submission_detail_page(conn, submission_id):
         try:
             st.download_button(
                 "⬇️ Download PDF (English)", data=export_submission_pdf(sub),
+                type="primary",
                 file_name=f"Report_{sub['sales_order_no']}.pdf", mime="application/pdf",
             )
         except Exception as e:
@@ -3636,7 +3640,7 @@ if page == "taxonomy":
                     f"Add reference images ({slots_left} slot(s) left)",
                     type=["png", "jpg", "jpeg"], accept_multiple_files=True, key=f"new_ref_img_{picked_defect_code}",
                 )
-                if new_ref_img_files and st.button("Save images", key=f"btn_save_ref_img_{picked_defect_code}"):
+                if new_ref_img_files and st.button("Save images", key=f"btn_save_ref_img_{picked_defect_code}", type="primary"):
                     new_b64_list = [base64.b64encode(f.getvalue()).decode("utf-8") for f in new_ref_img_files]
                     _, dropped = add_defect_reference_images(conn, picked_defect_code, new_b64_list)
                     if dropped:
@@ -3711,7 +3715,7 @@ if page == "taxonomy":
                 if action == "Match existing code":
                     chosen = st.selectbox("Select the best matching code",
                                            code_options, key=f"match_{sid}")
-                    if st.button("Confirm match", key=f"btn_match_{sid}"):
+                    if st.button("Confirm match", key=f"btn_match_{sid}", type="primary"):
                         if chosen == "-- select --":
                             st.warning("You haven't selected a code yet.")
                         else:
@@ -3745,7 +3749,7 @@ if page == "taxonomy":
                     elif kind == "CAPA":
                         extra["capa_type"] = st.selectbox("CAPA Type", CAPA_TYPES, key=f"capatype_{sid}")
 
-                    if st.button("Add new code & Approve", key=f"btn_new_{sid}"):
+                    if st.button("Add new code & Approve", key=f"btn_new_{sid}", type="primary"):
                         if not new_code.strip():
                             st.warning("You haven't entered a new code.")
                         else:
@@ -3789,7 +3793,7 @@ if page == "data_lookup":
             st.caption(
                 "Due to a previous technical issue (now fixed), some supplier reports submitted via the shared link failed to create a matching complaint. Click the button below to automatically restore them (including Defect/Root Cause/CAPA suggestions for the reviewer)."
             )
-            if st.button(f"🛠️ Repair {len(orphaned)} missing complaints"):
+            if st.button(f"🛠️ Repair {len(orphaned)} missing complaints", type="primary"):
                 ai_client_repair = get_ai_client()
                 progress = st.progress(0.0)
                 for i, row in enumerate(orphaned):
@@ -3841,6 +3845,7 @@ if page == "data_lookup":
                     ws.column_dimensions[col_cells[0].column_letter].width = max_len + 4
             st.download_button(
                 "Export Excel", data=excel_buf.getvalue(),
+                type="primary",
                 file_name="truy_xuat_du_lieu.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -3849,6 +3854,7 @@ if page == "data_lookup":
                 st.bar_chart(df.set_index(df.columns[0]))
                 st.download_button(
                     "Export chart (PNG)", data=export_chart_png(df),
+                    type="primary",
                     file_name="bieu_do.png", mime="image/png",
                 )
 
@@ -3903,6 +3909,7 @@ if page == "data_lookup":
             try:
                 st.download_button(
                     "Word (latest version)",
+                    type="primary",
                     data=export_word_report(
                         full_report,
                         supplier_signature_name=supplier_sig_name,
@@ -3924,7 +3931,7 @@ if page == "data_lookup":
                     "Defect photo", type=["png", "jpg", "jpeg"],
                     key=f"attach_defect_photo_{picked_id}",
                 )
-                if new_defect_photo is not None and st.button("Save photo", key=f"btn_save_defect_photo_{picked_id}"):
+                if new_defect_photo is not None and st.button("Save photo", key=f"btn_save_defect_photo_{picked_id}", type="primary"):
                     photo_b64 = base64.b64encode(new_defect_photo.getvalue()).decode("utf-8")
                     with conn.cursor() as cur:
                         cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64, picked_id))
@@ -4006,7 +4013,7 @@ if page == "data_lookup":
                             impl_date = st.date_input(
                                 "Mark implemented on date", key=f"impl_date_{capa_action_id}"
                             )
-                            if st.button("Mark implemented", key=f"btn_impl_{capa_action_id}"):
+                            if st.button("Mark implemented", key=f"btn_impl_{capa_action_id}", type="primary"):
                                 mark_capa_implemented(conn, capa_action_id, impl_date)
                                 compute_and_update_complaint_status(conn, picked_id)
                                 st.rerun()
@@ -4051,7 +4058,7 @@ if page == "data_lookup":
                     with col_v3:
                         st.write("")
                         st.write("")
-                        if st.button("Save result", key=f"btn_verif_{capa_action_id}"):
+                        if st.button("Save result", key=f"btn_verif_{capa_action_id}", type="primary"):
                             submit_capa_verification(conn, capa_action_id, verif_choice, verif_date)
                             st.success("Verification result saved.")
                             st.rerun()
@@ -4073,7 +4080,7 @@ if page == "ask_ai":
         help="Ask anything — not limited to the 4 target questions.",
     )
 
-    if st.button("Ask AI") and question.strip():
+    if st.button("Ask AI", type="primary") and question.strip():
         ai_client = get_ai_client()
         with st.spinner("AI is looking this up..."):
             try:
@@ -5110,6 +5117,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                 excel_bytes_early = build_register_excel(normalized_all)
                 st.download_button(
                     "⬇️ Excel", data=excel_bytes_early,
+                    type="primary",
                     file_name=f"Supplier_Return_Register_{datetime.now().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
