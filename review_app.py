@@ -3125,18 +3125,40 @@ div[class*="st-key-zone_gray_"] {
     border-radius: 0 18px 18px 0; padding: 0.4rem 1.2rem 1.1rem; margin-bottom: 0.6rem;
 }
 /* Card "enterprise sạch" — CHỈ dùng cho New Complaint + trang chi tiết complaint. Nền trắng,
-   viền mảnh xám nhạt, bo góc vừa phải, bóng đổ rất nhẹ — không tô màu lớn như zone_card. */
+   viền rõ ràng hơn (không quá mảnh), bo góc vừa phải, bóng đổ đủ để tách khối rõ ràng. */
 div[class*="st-key-clean_card_plain_"] {
-    background: #ffffff; border: 1px solid #e5e3da; border-radius: 12px;
-    padding: 1rem 1.3rem 1.3rem; margin-bottom: 0.9rem;
-    box-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+    background: #ffffff; border: 1.5px solid #d8d6cc; border-radius: 12px;
+    padding: 1.1rem 1.3rem 1.4rem; margin-bottom: 1.1rem;
+    box-shadow: 0 2px 6px rgba(20, 20, 30, 0.07);
 }
 /* Biến thể nhấn nhẹ cho Root Cause & CAPA — quan trọng hơn các phần khác theo đúng bản thiết kế
    tham khảo, nên có viền trái màu hổ phách thay vì viền xám trung tính. */
 div[class*="st-key-clean_card_amber_"] {
-    background: #fffaf0; border: 1px solid #e8dcc0; border-left: 3px solid #b8860b;
-    border-radius: 12px; padding: 1rem 1.3rem 1.3rem; margin-bottom: 0.9rem;
-    box-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
+    background: #fffaf0; border: 1.5px solid #e0c988; border-left: 4px solid #b8860b;
+    border-radius: 12px; padding: 1.1rem 1.3rem 1.4rem; margin-bottom: 1.1rem;
+    box-shadow: 0 2px 6px rgba(20, 20, 30, 0.07);
+}
+/* Bên trong card sạch: label đậm màu tối hơn (tránh mờ nhạt), ô nhập liệu có nền xám nhạt để
+   tách biệt rõ với nền trắng của card — nếu không, input trắng trên card trắng sẽ khó phân biệt. */
+div[class*="st-key-clean_card_"] label p,
+div[class*="st-key-clean_card_"] label {
+    color: #2c2c2a !important; font-weight: 600 !important; font-size: 13.5px !important;
+}
+div[class*="st-key-clean_card_"] .stTextInput input,
+div[class*="st-key-clean_card_"] .stTextArea textarea,
+div[class*="st-key-clean_card_"] .stNumberInput input,
+div[class*="st-key-clean_card_"] .stDateInput input,
+div[class*="st-key-clean_card_"] .stSelectbox > div > div {
+    background: #f4f5f7 !important; border: 1.3px solid #c9cdd3 !important; color: #1a1a1a !important;
+}
+div[class*="st-key-clean_card_"] .stTextInput input:focus,
+div[class*="st-key-clean_card_"] .stTextArea textarea:focus,
+div[class*="st-key-clean_card_"] .stNumberInput input:focus,
+div[class*="st-key-clean_card_"] .stDateInput input:focus {
+    background: #ffffff !important; border-color: #7F77DD !important;
+}
+div[class*="st-key-clean_card_"] .stCaption, div[class*="st-key-clean_card_"] p {
+    color: #5f5e5a;
 }
 /* Khung "Quick-create from an email" — tô nền tím nhạt để nổi bật ngay khi vào tab, khớp màu
    với ô dán ảnh highlight bên trong. */
