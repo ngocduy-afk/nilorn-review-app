@@ -561,7 +561,7 @@ def fetch_pending(conn):
         cur.execute("""
             select s.suggestion_id, s.complaint_id, s.suggestion_type, s.ai_suggested_name,
                    s.ai_reasoning, s.closest_existing_code, s.created_at,
-                   c.date_opened, c.so_po, s.responsible_party
+                   c.date_opened, c.so_po, s.responsible_party, coalesce(s.full_text, s.ai_suggested_name) as full_text
             from taxonomy_suggestion s
             left join complaint c on s.complaint_id = c.complaint_id
             where s.status = 'Pending'
@@ -2241,7 +2241,7 @@ def export_submission_word(sub):
 
     doc.add_heading("Order Info", level=1)
     field("Supplier (as reported)", sub["supplier_name_raw"])
-    field("Vendor No.", sub["vendor_code"] or "unmatched)")
+    field("Vendor No.", sub["vendor_code"] or "(unmatched)")
     field("Vendor Name", sub["vendor_name_matched"])
     field("Sales Order No.", sub["sales_order_no"])
     field("Purchase Order No.", sub["purchase_order_no"])
@@ -2539,9 +2539,9 @@ def repair_orphaned_submission(conn, ai_client, submission_id, record_date, supp
             )
             cur.execute(
                 """insert into taxonomy_suggestion
-                       (complaint_id, suggestion_type, ai_suggested_name, ai_reasoning, closest_existing_code)
-                   values (%s, %s, %s, %s, %s);""",
-                (complaint_id, kind, text[:200], reasoning, closest),
+                       (complaint_id, suggestion_type, ai_suggested_name, ai_reasoning, closest_existing_code, full_text)
+                   values (%s, %s, %s, %s, %s, %s);""",
+                (complaint_id, kind, text[:200], reasoning, closest, text),
             )
     conn.commit()
     return complaint_id
@@ -2583,9 +2583,9 @@ def suggest_root_cause_for_complaint(conn, ai_client, complaint_id, description_
     with conn.cursor() as cur:
         cur.execute(
             """insert into taxonomy_suggestion
-                   (complaint_id, suggestion_type, ai_suggested_name, ai_reasoning, closest_existing_code)
-               values (%s, 'Root Cause', %s, %s, %s);""",
-            (complaint_id, description_text[:200], reasoning, closest),
+                   (complaint_id, suggestion_type, ai_suggested_name, ai_reasoning, closest_existing_code, full_text)
+               values (%s, 'Root Cause', %s, %s, %s, %s);""",
+            (complaint_id, description_text[:200], reasoning, closest, description_text),
         )
     conn.commit()
     return True
@@ -3674,14 +3674,16 @@ if page == "taxonomy":
 
         for row in pending:
             (sid, complaint_id, kind, suggested_name, reasoning,
-             closest_code, created_at, date_opened, so_po, responsible_party) = row
+             closest_code, created_at, date_opened, so_po, responsible_party, full_text) = row
 
             with st.container(border=True):
                 st.markdown(
                     f'{kind_badge_html(kind)}&nbsp;&nbsp;<span style="font-size:1.15rem;font-weight:600;">{suggested_name}</span>',
                     unsafe_allow_html=True,
                 )
-                st.write(f"AI reasoning:** {reasoning}")
+                if full_text and full_text.strip() != (suggested_name or "").strip():
+                    st.write(f"**Full text (as submitted):** {full_text}")
+                st.write(f"**AI reasoning:** {reasoning}")
                 meta_bits = [f"📄 {so_po or '—'}", f"📅 {date_opened or '?'}"]
                 if closest_code:
                     meta_bits.append(f"🔍 {closest_code}")
@@ -4756,7 +4758,7 @@ if page == "new_complaint":
                         conn.commit()
                         if closest:
                             summary_lines.append(
-                                f"⚠️ **{kind}**: sent to the queue — AI found it **may relate to code {closest}sent to the queue — AI found it **may relate to code "
+                                f"⚠️ **{kind}**: sent to the queue — AI found it may relate to **{closest}**, the reviewer will check during approval"
                                 f"{closest}**, the reviewer will check during approval"
                             )
                         else:
@@ -4798,7 +4800,7 @@ if page == "new_complaint":
                             )
                         conn.commit()
                         summary_lines.append(
-                            f"🕓 **{kind}uncertain (may be new) — sent to the approval queue, see the 'Review Taxonomy' tab"
+                            f"🕓 **{kind}**: uncertain (may be new) — sent to the approval queue, see the 'Review Taxonomy' tab"
                         )
 
                 if not capa_choice.startswith("--"):
