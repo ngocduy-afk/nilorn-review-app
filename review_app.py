@@ -601,23 +601,10 @@ def approve_match_existing(conn, suggestion_id, existing_code, reviewer_id, comp
                     values (%s, %s, %s, 'Pending');
                 """, (complaint_id, existing_code, responsible_party))
 
-            # Nếu complaint này đến từ luồng NCC tự khai báo qua link chung, cập nhật lại
-            # root_cause/CAPA trong supplier_submissions bằng đúng nội dung đã khớp — để báo cáo
-            # Word/PDF tải về luôn là bản mới nhất, không còn giữ nguyên văn NCC tự gõ.
-            if kind in ("Root Cause", "CAPA"):
-                table, code_col, name_col = {
-                    "Root Cause": ("root_cause_taxonomy", "root_cause_code", "root_cause"),
-                    "CAPA": ("capa_taxonomy", "capa_code", "capa_action"),
-                }[kind]
-                cur.execute(f"select {name_col} from {table} where {code_col} = %s;", (existing_code,))
-                name_row = cur.fetchone()
-                if name_row:
-                    sub_col = "root_cause" if kind == "Root Cause" else "capa"
-                    cur.execute(
-                        f"update supplier_submissions set {sub_col} = %s "
-                        f"where submission_id = (select source_submission_id from complaint where complaint_id = %s);",
-                        (name_row[0], complaint_id),
-                    )
+            # LƯU Ý: KHÔNG ghi đè supplier_submissions.root_cause/capa ở đây — chữ NCC/CS tự gõ
+            # phải giữ nguyên vĩnh viễn trong UI/Excel/Word/PDF, bất kể trạng thái duyệt taxonomy.
+            # Việc khớp mã (existing_code) chỉ ảnh hưởng tới complaint.root_cause_code/capa_action
+            # (hệ thống nội bộ), không đụng vào chữ gốc hiển thị cho người dùng.
     conn.commit()
     if complaint_id and kind == "CAPA":
         compute_and_update_complaint_status(conn, complaint_id)
@@ -659,14 +646,8 @@ def approve_new_code(conn, suggestion_id, new_code, name, description, reviewer_
                     values (%s, %s, %s, 'Pending');
                 """, (complaint_id, new_code, responsible_party))
 
-            # Giống hệt approve_match_existing — cập nhật lại supplier_submissions nếu áp dụng.
-            if kind in ("Root Cause", "CAPA"):
-                sub_col = "root_cause" if kind == "Root Cause" else "capa"
-                cur.execute(
-                    f"update supplier_submissions set {sub_col} = %s "
-                    f"where submission_id = (select source_submission_id from complaint where complaint_id = %s);",
-                    (name, complaint_id),
-                )
+            # LƯU Ý: KHÔNG ghi đè supplier_submissions.root_cause/capa — giống hệt lý do đã sửa ở
+            # approve_match_existing (chữ NCC/CS tự gõ phải giữ nguyên vĩnh viễn).
     conn.commit()
     if complaint_id and kind == "CAPA":
         compute_and_update_complaint_status(conn, complaint_id)
@@ -3678,11 +3659,9 @@ if page == "taxonomy":
 
             with st.container(border=True):
                 st.markdown(
-                    f'{kind_badge_html(kind)}&nbsp;&nbsp;<span style="font-size:1.15rem;font-weight:600;">{suggested_name}</span>',
+                    f'{kind_badge_html(kind)}&nbsp;&nbsp;<span style="font-size:1.15rem;font-weight:600;">{full_text or suggested_name}</span>',
                     unsafe_allow_html=True,
                 )
-                if full_text and full_text.strip() != (suggested_name or "").strip():
-                    st.write(f"**Full text (as submitted):** {full_text}")
                 st.write(f"**AI reasoning:** {reasoning}")
                 meta_bits = [f"📄 {so_po or '—'}", f"📅 {date_opened or '?'}"]
                 if closest_code:
