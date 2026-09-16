@@ -5256,8 +5256,88 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     if r[idx["record_date"]] and r[idx["record_date"]].year == y and r[idx["record_date"]].month == m
                 )
                 month_counts.append(count)
-            chart_df = pd.DataFrame({"Complaints": month_counts}, index=month_labels)
-            st.bar_chart(chart_df, use_container_width=True)
+            chart_labels_json = json.dumps(month_labels)
+            chart_data_json = json.dumps(month_counts)
+            components.html(
+                f"""
+                <div style="position: relative; width: 100%; height: 280px; font-family: -apple-system, sans-serif;">
+                    <canvas id="complaintsTrendChart"></canvas>
+                </div>
+                <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+                <script>
+                (function() {{
+                    const labels = {chart_labels_json};
+                    const data = {chart_data_json};
+                    const ctx = document.getElementById('complaintsTrendChart').getContext('2d');
+
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 260);
+                    gradient.addColorStop(0, '#9c6ade');
+                    gradient.addColorStop(1, 'rgba(220, 200, 245, 0.15)');
+
+                    new Chart(ctx, {{
+                        type: 'bar',
+                        data: {{
+                            labels: labels,
+                            datasets: [
+                                {{
+                                    type: 'bar',
+                                    data: data,
+                                    backgroundColor: gradient,
+                                    borderRadius: {{ topLeft: 8, topRight: 8 }},
+                                    borderSkipped: false,
+                                    barThickness: 32,
+                                    order: 2,
+                                }},
+                                {{
+                                    type: 'line',
+                                    data: data,
+                                    borderColor: '#7F3FBF',
+                                    borderWidth: 2,
+                                    pointRadius: 0,
+                                    pointHoverRadius: 5,
+                                    pointBackgroundColor: '#7F3FBF',
+                                    tension: 0.35,
+                                    fill: false,
+                                    order: 1,
+                                }},
+                            ],
+                        }},
+                        options: {{
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {{
+                                legend: {{ display: false }},
+                                tooltip: {{
+                                    backgroundColor: '#2c2c2a',
+                                    titleColor: '#fff',
+                                    bodyColor: '#fff',
+                                    padding: 10,
+                                    cornerRadius: 8,
+                                    displayColors: false,
+                                    callbacks: {{
+                                        label: function(item) {{ return item.parsed.y + ' complaint(s)'; }},
+                                        title: function() {{ return ''; }},
+                                    }},
+                                }},
+                            }},
+                            scales: {{
+                                y: {{
+                                    beginAtZero: true,
+                                    grid: {{ color: 'rgba(0,0,0,0.06)' }},
+                                    ticks: {{ color: '#9c9a92', font: {{ size: 11 }} }},
+                                }},
+                                x: {{
+                                    grid: {{ display: false }},
+                                    ticks: {{ color: '#5f5e5a', font: {{ size: 12, weight: '600' }} }},
+                                }},
+                            }},
+                        }},
+                    }});
+                }})();
+                </script>
+                """,
+                height=290,
+            )
 
         with top5_col:
             section_header("🏆", "Suppliers with the Most Complaints", "amber")
