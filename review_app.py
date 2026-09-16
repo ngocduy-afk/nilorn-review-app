@@ -3418,6 +3418,98 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
     )
 
 
+def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
+    """Biểu đồ cột gradient tím + đường nối phía trên + tooltip đen bo tròn — dùng chung cho MỌI
+    nơi trong app cần biểu đồ cột đơn giản (thay cho st.bar_chart mặc định của Streamlit, vốn
+    không tùy biến được màu sắc). chart_key cần DUY NHẤT cho mỗi lần gọi trên cùng 1 trang (dùng
+    làm id của thẻ canvas), tránh trùng lặp khi có nhiều biểu đồ cùng lúc."""
+    labels_json = json.dumps([str(l) for l in labels])
+    data_json = json.dumps([float(v) for v in values])
+    suffix_json = json.dumps(f" {value_suffix}" if value_suffix else "")
+    canvas_id = f"gradientChart_{chart_key}"
+    components.html(
+        f"""
+        <div style="position: relative; width: 100%; height: {height - 10}px; font-family: -apple-system, sans-serif;">
+            <canvas id="{canvas_id}"></canvas>
+        </div>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+        <script>
+        (function() {{
+            const labels = {labels_json};
+            const data = {data_json};
+            const suffix = {suffix_json};
+            const ctx = document.getElementById('{canvas_id}').getContext('2d');
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, {height - 30});
+            gradient.addColorStop(0, '#9c6ade');
+            gradient.addColorStop(1, 'rgba(200, 170, 235, 0.4)');
+
+            new Chart(ctx, {{
+                type: 'bar',
+                data: {{
+                    labels: labels,
+                    datasets: [
+                        {{
+                            type: 'bar',
+                            data: data,
+                            backgroundColor: gradient,
+                            borderRadius: {{ topLeft: 8, topRight: 8 }},
+                            borderSkipped: false,
+                            barThickness: 32,
+                            order: 2,
+                        }},
+                        {{
+                            type: 'line',
+                            data: data,
+                            borderColor: '#7F3FBF',
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                            pointBackgroundColor: '#7F3FBF',
+                            tension: 0,
+                            fill: false,
+                            order: 1,
+                        }},
+                    ],
+                }},
+                options: {{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {{
+                        legend: {{ display: false }},
+                        tooltip: {{
+                            backgroundColor: '#2c2c2a',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            padding: 10,
+                            cornerRadius: 8,
+                            displayColors: false,
+                            callbacks: {{
+                                label: function(item) {{ return item.parsed.y + suffix; }},
+                                title: function() {{ return ''; }},
+                            }},
+                        }},
+                    }},
+                    scales: {{
+                        y: {{
+                            beginAtZero: true,
+                            grid: {{ color: 'rgba(0,0,0,0.06)' }},
+                            ticks: {{ color: '#9c9a92', font: {{ size: 11 }} }},
+                        }},
+                        x: {{
+                            grid: {{ display: false }},
+                            ticks: {{ color: '#5f5e5a', font: {{ size: 12, weight: '600' }} }},
+                        }},
+                    }},
+                }},
+            }});
+        }})();
+        </script>
+        """,
+        height=height,
+    )
+
+
 def render_paste_zone(target_label_substring, height=100, highlight=False):
     """Vùng dán ảnh Ctrl+V — tự tìm ĐÚNG ô upload cần điền dựa theo 1 đoạn nhãn duy nhất của ô đó
     (target_label_substring), thay vì lấy ô upload ĐẦU TIÊN tìm thấy trên trang. Cần thiết vì app
@@ -3923,7 +4015,7 @@ if page == "data_lookup":
             )
 
             if df.shape[1] == 2 and df.shape[0] > 0:
-                st.bar_chart(df.set_index(df.columns[0]))
+                render_gradient_bar_chart(df[df.columns[0]], df[df.columns[1]], chart_key="target_question")
                 st.download_button(
                     "Export chart (PNG)", data=export_chart_png(df),
                     type="primary",
@@ -4267,8 +4359,10 @@ if page == "ask_ai":
                     non_numeric_cols = [c for c in df_ans.columns if c not in numeric_cols]
                     if numeric_cols and non_numeric_cols:
                         try:
-                            chart_df = df_ans[[non_numeric_cols[0], numeric_cols[0]]].set_index(non_numeric_cols[0])
-                            st.bar_chart(chart_df, use_container_width=True)
+                            render_gradient_bar_chart(
+                                df_ans[non_numeric_cols[0]], df_ans[numeric_cols[0]],
+                                value_suffix=numeric_cols[0], chart_key="ask_ai",
+                            )
                         except Exception:
                             pass
 
@@ -5256,88 +5350,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     if r[idx["record_date"]] and r[idx["record_date"]].year == y and r[idx["record_date"]].month == m
                 )
                 month_counts.append(count)
-            chart_labels_json = json.dumps(month_labels)
-            chart_data_json = json.dumps(month_counts)
-            components.html(
-                f"""
-                <div style="position: relative; width: 100%; height: 280px; font-family: -apple-system, sans-serif;">
-                    <canvas id="complaintsTrendChart"></canvas>
-                </div>
-                <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-                <script>
-                (function() {{
-                    const labels = {chart_labels_json};
-                    const data = {chart_data_json};
-                    const ctx = document.getElementById('complaintsTrendChart').getContext('2d');
-
-                    const gradient = ctx.createLinearGradient(0, 0, 0, 260);
-                    gradient.addColorStop(0, '#9c6ade');
-                    gradient.addColorStop(1, 'rgba(220, 200, 245, 0.15)');
-
-                    new Chart(ctx, {{
-                        type: 'bar',
-                        data: {{
-                            labels: labels,
-                            datasets: [
-                                {{
-                                    type: 'bar',
-                                    data: data,
-                                    backgroundColor: gradient,
-                                    borderRadius: {{ topLeft: 8, topRight: 8 }},
-                                    borderSkipped: false,
-                                    barThickness: 32,
-                                    order: 2,
-                                }},
-                                {{
-                                    type: 'line',
-                                    data: data,
-                                    borderColor: '#7F3FBF',
-                                    borderWidth: 2,
-                                    pointRadius: 0,
-                                    pointHoverRadius: 5,
-                                    pointBackgroundColor: '#7F3FBF',
-                                    tension: 0,
-                                    fill: false,
-                                    order: 1,
-                                }},
-                            ],
-                        }},
-                        options: {{
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: {{
-                                legend: {{ display: false }},
-                                tooltip: {{
-                                    backgroundColor: '#2c2c2a',
-                                    titleColor: '#fff',
-                                    bodyColor: '#fff',
-                                    padding: 10,
-                                    cornerRadius: 8,
-                                    displayColors: false,
-                                    callbacks: {{
-                                        label: function(item) {{ return item.parsed.y + ' complaint(s)'; }},
-                                        title: function() {{ return ''; }},
-                                    }},
-                                }},
-                            }},
-                            scales: {{
-                                y: {{
-                                    beginAtZero: true,
-                                    grid: {{ color: 'rgba(0,0,0,0.06)' }},
-                                    ticks: {{ color: '#9c9a92', font: {{ size: 11 }} }},
-                                }},
-                                x: {{
-                                    grid: {{ display: false }},
-                                    ticks: {{ color: '#5f5e5a', font: {{ size: 12, weight: '600' }} }},
-                                }},
-                            }},
-                        }},
-                    }});
-                }})();
-                </script>
-                """,
-                height=290,
-            )
+            render_gradient_bar_chart(month_labels, month_counts, value_suffix="complaint(s)", chart_key="dashboard_trend")
 
         with top5_col:
             section_header("🏆", "Suppliers with the Most Complaints", "amber")
