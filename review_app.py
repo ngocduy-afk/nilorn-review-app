@@ -5296,7 +5296,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                                     pointRadius: 0,
                                     pointHoverRadius: 5,
                                     pointBackgroundColor: '#7F3FBF',
-                                    tension: 0.35,
+                                    tension: 0,
                                     fill: false,
                                     order: 1,
                                 }},
