@@ -5929,7 +5929,7 @@ div[class*="st-key-recent_card_coral_"]::before {
     background: radial-gradient(180px circle at var(--mx) var(--my), rgba(216, 73, 44, 0.12), transparent 65%);
 }
 div[class*="st-key-recent_card_teal_"]::before {
-    background: radial-gradient(180px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.45), transparent 65%);
+    background: radial-gradient(180px circle at var(--mx) var(--my), rgba(31, 157, 85, 0.16), transparent 65%);
 }
 div[class*="st-key-recent_card_coral_"]:hover::before,
 div[class*="st-key-recent_card_teal_"]:hover::before { opacity: 1; }
