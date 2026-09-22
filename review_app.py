@@ -5771,9 +5771,21 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             "closed": f"Closed ({n_closed})",
             "all": f"All ({len(period_rows)})",
         }
+        _filter_keys = list(_filter_labels.keys())
+        # Explicitly pin the displayed default to whatever was already chosen. Without this, going
+        # to a "View details" page (which doesn't render this radio at all) and back causes Streamlit
+        # to remount the widget from scratch — its RETURN value still correctly restores from
+        # session_state (so the cards below were filtering correctly all along), but the pill shown
+        # as "checked" on that first remounted render silently reverts to the first option
+        # ("Not Closed") regardless of what was actually selected before. Passing `index=` computed
+        # from the stored value forces the visual state to match reality on every render, including
+        # this first-mount-after-remount case.
+        _stored_filter = st.session_state.get("dashboard_card_filter")
+        _filter_default_index = _filter_keys.index(_stored_filter) if _stored_filter in _filter_keys else 0
         filter_pick = st.radio(
             "Filter by status",
-            list(_filter_labels.keys()),
+            _filter_keys,
+            index=_filter_default_index,
             format_func=lambda k: _filter_labels[k],
             horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
         )
