@@ -3647,7 +3647,7 @@ def _water_loader_markup(label, uid):
         rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
         transparent calc(var(--nilorn-r-{uid}) + 62px));
-    animation: nilornRippleGrow-{uid} 1.8s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
 }}
 .nilorn-ripple-{uid}.r2 {{
     animation-delay: 0.3s;
@@ -3672,8 +3672,8 @@ def _water_loader_markup(label, uid):
         0 0 22px 4px rgba(255, 255, 255, 0.35),
         inset 0 0 26px rgba(127, 119, 221, 0.28);
     opacity: 0.85;
-    animation: nilornRippleGrow-{uid} 1.8s cubic-bezier(0.2, 0.55, 0.35, 1) forwards,
-               nilornRimFade-{uid} 1.8s ease forwards;
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards,
+               nilornRimFade-{uid} 2.2s ease forwards;
 }}
 .nilorn-rim-{uid}.r2 {{
     animation-delay: 0.3s, 0.3s;
@@ -3703,14 +3703,14 @@ def _water_loader_markup(label, uid):
     box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     /* Finite (not infinite!) — pulses briefly, then fades out on its own and stays gone, so it
        can never look "stuck" if the person doesn't interact again right after this fires. */
-    animation: nilornLabelPulse-{uid} 2.4s ease forwards;
+    animation: nilornLabelPulse-{uid} 2.8s ease forwards;
     pointer-events: none;
 }}
 .nilorn-label-pill-{uid} .dot {{
     width: 9px; height: 9px; border-radius: 50%;
     background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
-    animation: nilornDot-{uid} 1s ease-in-out 2.4;
+    animation: nilornDot-{uid} 1s ease-in-out 2.8;
 }}
 </style>
 <!-- Water-refraction filter: distorts whatever is visible THROUGH the expanding ring (via
