@@ -3597,30 +3597,25 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
 
 
 def _water_loader_markup(label, uid):
-    """Shared markup for the water-wave loading effect — imagine the screen as the surface of a
-    clear lake: a near-transparent, wavy-edged band sweeps across the FULL page from right to
-    left, and ONLY the real app content currently showing through that band is warped (via
-    backdrop-filter + an animated SVG feTurbulence/feDisplacementMap referenced from the band
-    itself) — so the ripple follows the wave's position instead of distorting the whole screen at
-    once, like water actually flowing over the interface. A small label pill sits fixed at the
-    bottom to say what's happening. Used by both thinking_overlay (persistent, needs a unique uid
-    per placeholder) and show_transition_pill (one-shot, uid='once')."""
-    wave_mask = (
-        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
-        "width='100' height='220'%3E%3Cpath d='M22,0 C46,28 -2,82 22,110 "
-        "C46,138 -2,192 22,220 L78,220 C54,192 98,138 78,110 "
-        "C54,82 98,28 78,0 Z' fill='white'/%3E%3C/svg%3E\")"
-    )
+    """Shared markup for the water-ripple loading effect — imagine someone drops a stone into
+    the middle of the screen as if it were a still lake: a ring-shaped distortion (via
+    backdrop-filter + an SVG feTurbulence/feDisplacementMap, masked into a thin expanding
+    annulus with a CSS @property-animated radius) grows outward from the center, warping ONLY
+    the real app content it is currently passing over — completely transparent otherwise, no
+    color wash at all. Two rings, slightly staggered, mimic real concentric water ripples. A
+    small label pill sits fixed at the bottom to say what's happening. Used by both
+    thinking_overlay (persistent, needs a unique uid per placeholder) and show_transition_pill
+    (one-shot, uid='once')."""
     return f"""<style>
-@keyframes nilornSweepMove-{uid} {{
-    0%   {{ transform: translateX(0); }}
-    100% {{ transform: translateX(-220vw); }}
+@property --nilorn-r-{uid} {{
+    syntax: '<length>';
+    inherits: true;
+    initial-value: 0px;
 }}
-@keyframes nilornMaskFlow-{uid} {{
-    from {{ mask-position: 0 0;     -webkit-mask-position: 0 0; }}
-    to   {{ mask-position: 0 220px; -webkit-mask-position: 0 220px; }}
+@keyframes nilornRippleGrow-{uid} {{
+    from {{ --nilorn-r-{uid}: 0px; }}
+    to   {{ --nilorn-r-{uid}: 145vmax; }}
 }}
-@keyframes nilornWashIn-{uid} {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 @keyframes nilornLabelPulse-{uid} {{
     0%, 100% {{ opacity: 0.55; }}
     50%      {{ opacity: 1; }}
@@ -3629,57 +3624,38 @@ def _water_loader_markup(label, uid):
     0%, 100% {{ transform: scale(1);    opacity: 1;    }}
     50%      {{ transform: scale(0.55); opacity: 0.55; }}
 }}
-.nilorn-sweep-{uid} {{
+.nilorn-ripple-{uid} {{
     position: fixed;
     inset: 0;
     z-index: 999997;
-    overflow: hidden;
     pointer-events: none;
-    background: rgba(243, 240, 251, 0.10);
-    animation: nilornWashIn-{uid} 0.15s ease forwards;
-}}
-.nilorn-sweep-{uid} .band {{
-    position: absolute;
-    top: -15%;
-    left: 100%;
-    width: 50vw;
-    height: 130%;
-    /* Clear/transparent like real lake water — just a faint tint + highlight, not an opaque
-       purple wash. The actual "water" read comes from the content warping underneath
-       (backdrop-filter below), not from color. */
-    background: linear-gradient(100deg,
-        rgba(159, 148, 235, 0)    0%,
-        rgba(200, 192, 245, 0.10) 28%,
-        rgba(235, 230, 255, 0.22) 50%,
-        rgba(200, 192, 245, 0.10) 72%,
-        rgba(159, 148, 235, 0)    100%);
-    /* Distort only the real app content that's currently showing through this band — so the
-       ripple only affects whatever the wave is touching right now, not the whole screen. */
+    --nilorn-r-{uid}: 0px;
+    /* Distort only the real app content currently showing through this ring — the rest of the
+       page stays untouched and fully sharp, exactly like a ripple on clear water. */
     backdrop-filter: url(#nilorn-water-warp-{uid});
     -webkit-backdrop-filter: url(#nilorn-water-warp-{uid});
-    mask-image: {wave_mask};
-    -webkit-mask-image: {wave_mask};
-    mask-repeat: repeat-y;
-    -webkit-mask-repeat: repeat-y;
-    mask-size: 100% 220px;
-    -webkit-mask-size: 100% 220px;
-    transform: translateX(0);
-    animation:
-        nilornSweepMove-{uid} 1.6s cubic-bezier(0.45, 0, 0.2, 1) forwards,
-        nilornMaskFlow-{uid} 0.7s linear infinite;
+    mask-image: radial-gradient(circle at 50% 42%,
+        transparent 0,
+        transparent calc(var(--nilorn-r-{uid}) - 70px),
+        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 24px),
+        rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
+        transparent calc(var(--nilorn-r-{uid}) + 46px));
+    -webkit-mask-image: radial-gradient(circle at 50% 42%,
+        transparent 0,
+        transparent calc(var(--nilorn-r-{uid}) - 70px),
+        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 24px),
+        rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
+        transparent calc(var(--nilorn-r-{uid}) + 46px));
+    animation: nilornRippleGrow-{uid} 1.7s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
 }}
-.nilorn-sweep-{uid} .band.b2 {{
-    width: 30vw;
-    opacity: 0.7;
-    animation:
-        nilornSweepMove-{uid} 1.8s cubic-bezier(0.45, 0, 0.2, 1) forwards,
-        nilornMaskFlow-{uid} 0.55s linear infinite reverse;
-    animation-delay: 0.12s, 0s;
+.nilorn-ripple-{uid}.r2 {{
+    animation-delay: 0.3s;
 }}
-.nilorn-sweep-{uid} .label-pill {{
+.nilorn-label-pill-{uid} {{
     position: fixed;
     left: 50%;
     bottom: 34px;
+    z-index: 999998;
     transform: translateX(-50%);
     display: flex;
     align-items: center;
@@ -3694,35 +3670,33 @@ def _water_loader_markup(label, uid):
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     animation: nilornLabelPulse-{uid} 1.4s ease-in-out infinite;
+    pointer-events: none;
 }}
-.nilorn-sweep-{uid} .label-pill .dot {{
+.nilorn-label-pill-{uid} .dot {{
     width: 9px; height: 9px; border-radius: 50%;
     background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
     animation: nilornDot-{uid} 1s ease-in-out infinite;
 }}
 </style>
-<!-- Water-refraction filter: distorts whatever is visible THROUGH the moving band (via
-     backdrop-filter on .band above), so only the content the wave is currently touching
-     ripples — not the whole screen. -->
+<!-- Water-refraction filter: distorts whatever is visible THROUGH the expanding ring (via
+     backdrop-filter above), so only the content the ripple is currently passing over warps. -->
 <svg width="0" height="0" style="position:absolute;overflow:hidden;">
-    <filter id="nilorn-water-warp-{uid}" x="-40%" y="-20%" width="180%" height="140%">
+    <filter id="nilorn-water-warp-{uid}" x="-40%" y="-40%" width="180%" height="180%">
         <feTurbulence type="fractalNoise" numOctaves="2" seed="7" result="nilorn-noise-{uid}">
             <animate attributeName="baseFrequency" dur="0.9s" begin="0s" repeatCount="indefinite"
-                values="0.006 0.035;0.016 0.05;0.006 0.035" keyTimes="0;0.5;1" />
+                values="0.008 0.02;0.02 0.05;0.008 0.02" keyTimes="0;0.5;1" />
         </feTurbulence>
-        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="16" xChannelSelector="R" yChannelSelector="G" />
+        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="22" xChannelSelector="R" yChannelSelector="G" />
     </filter>
 </svg>
-<div class="nilorn-sweep-{uid}">
-    <span class="band b1"></span>
-    <span class="band b2"></span>
-    <div class="label-pill"><span class="dot"></span>{label}</div>
-</div>"""
+<div class="nilorn-ripple-{uid} r1"></div>
+<div class="nilorn-ripple-{uid} r2"></div>
+<div class="nilorn-label-pill-{uid}"><span class="dot"></span>{label}</div>"""
 
 
 @contextlib.contextmanager
-def thinking_overlay(label="Thinking...", min_visible=1.8):
+def thinking_overlay(label="Thinking...", min_visible=2.0):
     """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
     (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
     the page-load splash — concentric rings pulsing outward from a glowing core, over a
@@ -3742,7 +3716,7 @@ def thinking_overlay(label="Thinking...", min_visible=1.8):
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading...", hold=1.8):
+def show_transition_pill(label="Loading...", hold=2.0):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
     navigates or reloads). Renders the same water-ripple loader as the very last frame before
