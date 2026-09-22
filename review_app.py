@@ -3636,20 +3636,51 @@ def _water_loader_markup(label, uid):
     -webkit-backdrop-filter: url(#nilorn-water-warp-{uid});
     mask-image: radial-gradient(circle at 50% 42%,
         transparent 0,
-        transparent calc(var(--nilorn-r-{uid}) - 70px),
-        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 24px),
+        transparent calc(var(--nilorn-r-{uid}) - 100px),
+        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
-        transparent calc(var(--nilorn-r-{uid}) + 46px));
+        transparent calc(var(--nilorn-r-{uid}) + 62px));
     -webkit-mask-image: radial-gradient(circle at 50% 42%,
         transparent 0,
-        transparent calc(var(--nilorn-r-{uid}) - 70px),
-        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 24px),
+        transparent calc(var(--nilorn-r-{uid}) - 100px),
+        rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
-        transparent calc(var(--nilorn-r-{uid}) + 46px));
-    animation: nilornRippleGrow-{uid} 1.7s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
+        transparent calc(var(--nilorn-r-{uid}) + 62px));
+    animation: nilornRippleGrow-{uid} 1.8s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
 }}
 .nilorn-ripple-{uid}.r2 {{
     animation-delay: 0.3s;
+}}
+/* Visible glint riding the leading edge of each ripple — a thin bright rim + soft glow, the way
+   real water catches light at the crest of a wave, so the ring reads clearly even where the
+   content behind it doesn't have much to distort. */
+.nilorn-rim-{uid} {{
+    position: fixed;
+    top: 42%;
+    left: 50%;
+    z-index: 999996;
+    pointer-events: none;
+    --nilorn-r-{uid}: 0px;
+    width: calc(var(--nilorn-r-{uid}) * 2);
+    height: calc(var(--nilorn-r-{uid}) * 2);
+    margin-left: calc(var(--nilorn-r-{uid}) * -1);
+    margin-top: calc(var(--nilorn-r-{uid}) * -1);
+    border-radius: 50%;
+    border: 2.5px solid rgba(255, 255, 255, 0.55);
+    box-shadow:
+        0 0 22px 4px rgba(255, 255, 255, 0.35),
+        inset 0 0 26px rgba(127, 119, 221, 0.28);
+    opacity: 0.85;
+    animation: nilornRippleGrow-{uid} 1.8s cubic-bezier(0.2, 0.55, 0.35, 1) forwards,
+               nilornRimFade-{uid} 1.8s ease forwards;
+}}
+.nilorn-rim-{uid}.r2 {{
+    animation-delay: 0.3s, 0.3s;
+}}
+@keyframes nilornRimFade-{uid} {{
+    0%   {{ opacity: 0.9; }}
+    70%  {{ opacity: 0.55; }}
+    100% {{ opacity: 0; }}
 }}
 .nilorn-label-pill-{uid} {{
     position: fixed;
@@ -3687,16 +3718,18 @@ def _water_loader_markup(label, uid):
             <animate attributeName="baseFrequency" dur="0.9s" begin="0s" repeatCount="indefinite"
                 values="0.008 0.02;0.02 0.05;0.008 0.02" keyTimes="0;0.5;1" />
         </feTurbulence>
-        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="22" xChannelSelector="R" yChannelSelector="G" />
+        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="34" xChannelSelector="R" yChannelSelector="G" />
     </filter>
 </svg>
 <div class="nilorn-ripple-{uid} r1"></div>
 <div class="nilorn-ripple-{uid} r2"></div>
+<div class="nilorn-rim-{uid} r1"></div>
+<div class="nilorn-rim-{uid} r2"></div>
 <div class="nilorn-label-pill-{uid}"><span class="dot"></span>{label}</div>"""
 
 
 @contextlib.contextmanager
-def thinking_overlay(label="Thinking...", min_visible=2.0):
+def thinking_overlay(label="Thinking...", min_visible=2.2):
     """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
     (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
     the page-load splash — concentric rings pulsing outward from a glowing core, over a
@@ -3716,7 +3749,7 @@ def thinking_overlay(label="Thinking...", min_visible=2.0):
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading...", hold=2.0):
+def show_transition_pill(label="Loading...", hold=2.2):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
     navigates or reloads). Renders the same water-ripple loader as the very last frame before
