@@ -3595,69 +3595,111 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
     )
 
 
-@contextlib.contextmanager
-def thinking_overlay(label="Thinking..."):
-    """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running
-    calls (Classify & Save, Ask AI, Extract from email, ...). Mirrors the reference
-    reveal-interaction: the background gently dims + blurs, and a dark rounded pill with a
-    small pulsing dot sits fixed near the bottom of the screen while work happens, then both
-    disappear the moment the block finishes (the fresh content is already rendered underneath,
-    so it reads as a "reveal" rather than a hard cut)."""
-    placeholder = st.empty()
-    placeholder.markdown(
-        f"""<style>
-@keyframes nilornDimIn {{
-    from {{ opacity: 0; }}
-    to   {{ opacity: 1; }}
+def _water_loader_markup(label, uid):
+    """Shared markup for the water-ripple loading effect: a dim+blur wash behind expanding
+    concentric ripple rings (same visual language as the page-load splash), with the label
+    underneath. Used by both thinking_overlay (persistent, needs a unique uid per placeholder)
+    and show_transition_pill (one-shot, uid='once')."""
+    return f"""<style>
+@keyframes nilornDimIn-{uid} {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+@keyframes nilornLoaderIn-{uid} {{
+    from {{ opacity: 0; transform: translate(-50%, -50%) scale(0.92); }}
+    to   {{ opacity: 1; transform: translate(-50%, -50%) scale(1); }}
 }}
-@keyframes nilornThinkIn {{
-    from {{ opacity: 0; transform: translate(-50%, 12px) scale(0.96); }}
-    to   {{ opacity: 1; transform: translate(-50%, 0) scale(1); }}
+@keyframes nilornRipple-{uid} {{
+    0%   {{ transform: scale(1);   opacity: 0.65; border-width: 2.5px; }}
+    100% {{ transform: scale(4.6); opacity: 0;    border-width: 0.5px; }}
 }}
-@keyframes nilornThinkDot {{
-    0%, 100% {{ transform: scale(1);    opacity: 1;    }}
-    50%      {{ transform: scale(0.55); opacity: 0.55; }}
+@keyframes nilornCorePulse-{uid} {{
+    0%, 100% {{ transform: scale(1); }}
+    50%      {{ transform: scale(1.18); }}
 }}
-#nilorn-dim-{id(placeholder)} {{
+@keyframes nilornLabelPulse-{uid} {{
+    0%, 100% {{ opacity: 0.55; }}
+    50%      {{ opacity: 1; }}
+}}
+.nilorn-dim-{uid} {{
     position: fixed;
     inset: 0;
     z-index: 999997;
-    background: rgba(243, 240, 251, 0.38);
-    backdrop-filter: blur(2.5px);
-    -webkit-backdrop-filter: blur(2.5px);
-    animation: nilornDimIn 0.3s ease forwards;
+    background: rgba(243, 240, 251, 0.5);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    animation: nilornDimIn-{uid} 0.3s ease forwards;
     pointer-events: none;
 }}
-#nilorn-think-pill-{id(placeholder)} {{
+.nilorn-loader-{uid} {{
     position: fixed;
+    top: 50%;
     left: 50%;
-    bottom: 34px;
     z-index: 999998;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 10px;
-    background: #1c1c22;
-    color: rgba(255, 255, 255, 0.78);
+    gap: 16px;
+    animation: nilornLoaderIn-{uid} 0.25s ease forwards;
+    pointer-events: none;
+}}
+.nilorn-loader-{uid} .ripple-wrap {{
+    position: relative;
+    width: 108px;
+    height: 108px;
+}}
+.nilorn-loader-{uid} .ripple-core {{
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 20px; height: 20px;
+    margin: -10px 0 0 -10px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
+    box-shadow: 0 0 16px rgba(127, 119, 221, 0.6);
+    animation: nilornCorePulse-{uid} 1.4s ease-in-out infinite;
+}}
+.nilorn-loader-{uid} .ripple-ring {{
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 20px; height: 20px;
+    margin: -10px 0 0 -10px;
+    border-radius: 50%;
+    border: 2px solid rgba(127, 119, 221, 0.55);
+    opacity: 0;
+    animation: nilornRipple-{uid} 1.7s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}}
+.nilorn-loader-{uid} .ripple-ring.r2 {{ animation-delay: 0.42s; }}
+.nilorn-loader-{uid} .ripple-ring.r3 {{ animation-delay: 0.85s; }}
+.nilorn-loader-{uid} .loader-label {{
     font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 600;
     font-size: 14.5px;
-    padding: 11px 20px 11px 15px;
+    color: #4a4470;
+    background: rgba(255, 255, 255, 0.7);
+    padding: 7px 16px;
     border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    animation: nilornThinkIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-}}
-#nilorn-think-pill-{id(placeholder)} .dot {{
-    width: 9px; height: 9px; border-radius: 50%;
-    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
-    box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
-    animation: nilornThinkDot 1s ease-in-out infinite;
+    animation: nilornLabelPulse-{uid} 1.4s ease-in-out infinite;
 }}
 </style>
-<div id="nilorn-dim-{id(placeholder)}"></div>
-<div id="nilorn-think-pill-{id(placeholder)}"><span class="dot"></span>{label}</div>""",
-        unsafe_allow_html=True,
-    )
+<div class="nilorn-dim-{uid}"></div>
+<div class="nilorn-loader-{uid}">
+    <div class="ripple-wrap">
+        <div class="ripple-ring r1"></div>
+        <div class="ripple-ring r2"></div>
+        <div class="ripple-ring r3"></div>
+        <div class="ripple-core"></div>
+    </div>
+    <div class="loader-label">{label}</div>
+</div>"""
+
+
+@contextlib.contextmanager
+def thinking_overlay(label="Thinking..."):
+    """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
+    (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
+    the page-load splash — concentric rings pulsing outward from a glowing core, over a
+    dimmed+blurred background — so every loading moment in the app reads as the same "water"
+    motion. Disappears the moment the block finishes (the fresh content is already rendered
+    underneath, so it reads as a reveal rather than a hard cut)."""
+    placeholder = st.empty()
+    placeholder.markdown(_water_loader_markup(label, f"t{id(placeholder)}"), unsafe_allow_html=True)
     try:
         yield
     finally:
@@ -3667,50 +3709,11 @@ def thinking_overlay(label="Thinking..."):
 def show_transition_pill(label="Loading..."):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
-    navigates or reloads). Renders the dim+blur wash and the pulsing 'Thinking...'-style pill as
-    the very last frame before Streamlit tears the script down and reruns it, so the click reads
-    as a quick transition instead of a hard cut. No placeholder/cleanup needed — the upcoming
-    rerun replaces the whole page anyway."""
-    st.markdown(
-        f"""<style>
-@keyframes nilornDimIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-@keyframes nilornThinkIn {{
-    from {{ opacity: 0; transform: translate(-50%, 12px) scale(0.96); }}
-    to   {{ opacity: 1; transform: translate(-50%, 0) scale(1); }}
-}}
-@keyframes nilornThinkDot {{
-    0%, 100% {{ transform: scale(1);    opacity: 1;    }}
-    50%      {{ transform: scale(0.55); opacity: 0.55; }}
-}}
-.nilorn-dim-once {{
-    position: fixed; inset: 0; z-index: 999997;
-    background: rgba(243, 240, 251, 0.38);
-    backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
-    animation: nilornDimIn 0.25s ease forwards;
-    pointer-events: none;
-}}
-.nilorn-think-pill-once {{
-    position: fixed; left: 50%; bottom: 34px; z-index: 999998;
-    display: flex; align-items: center; gap: 10px;
-    background: #1c1c22; color: rgba(255, 255, 255, 0.78);
-    font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-weight: 600; font-size: 14.5px;
-    padding: 11px 20px 11px 15px; border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    animation: nilornThinkIn 0.25s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
-}}
-.nilorn-think-pill-once .dot {{
-    width: 9px; height: 9px; border-radius: 50%;
-    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
-    box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
-    animation: nilornThinkDot 1s ease-in-out infinite;
-}}
-</style>
-<div class="nilorn-dim-once"></div>
-<div class="nilorn-think-pill-once"><span class="dot"></span>{label}</div>""",
-        unsafe_allow_html=True,
-    )
+    navigates or reloads). Renders the same water-ripple loader as the very last frame before
+    Streamlit tears the script down and reruns it, so the click reads as a quick water-like
+    transition instead of a hard cut. No placeholder/cleanup needed — the upcoming rerun
+    replaces the whole page anyway."""
+    st.markdown(_water_loader_markup(label, "once"), unsafe_allow_html=True)
 
 
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
