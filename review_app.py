@@ -2700,6 +2700,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
         if st.button("Back to Dashboard"):
             st.session_state.selected_submission_id = None
             st.session_state.current_page = "dashboard"
+            show_transition_pill()
             st.rerun()
 
     with conn.cursor() as cur:
@@ -2825,6 +2826,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                     recorded_by_staff_id_legacy,
                 )
                 st.success("Saved.")
+                show_transition_pill()
                 st.rerun()
 
     st.markdown("---")
@@ -2860,6 +2862,7 @@ def render_legacy_complaint_detail_page(conn, complaint_id):
                 cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64_legacy, complaint_id))
             conn.commit()
             st.success("Photo saved.")
+            show_transition_pill()
             st.rerun()
 
     st.markdown("---")
@@ -2881,6 +2884,7 @@ def render_submission_detail_page(conn, submission_id):
         if st.button("Back to Dashboard"):
             st.session_state.selected_submission_id = None
             st.session_state.current_page = "dashboard"
+            show_transition_pill()
             st.rerun()
 
     st.title("Report Detail")
@@ -2985,6 +2989,7 @@ def render_submission_detail_page(conn, submission_id):
                     complaint_validity_sub,
                 )
                 st.success("Saved.")
+                show_transition_pill()
                 st.rerun()
 
     st.markdown("---")
@@ -3036,6 +3041,7 @@ def render_submission_detail_page(conn, submission_id):
                             )
                         conn.commit()
                     st.success("Media updated.")
+                    show_transition_pill()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Could not upload: {e}")
@@ -3658,6 +3664,55 @@ def thinking_overlay(label="Thinking..."):
         placeholder.empty()
 
 
+def show_transition_pill(label="Loading..."):
+    """One-shot version of thinking_overlay for the instant right before an st.rerun() call
+    (Save buttons, View details, Back to Dashboard, and every other primary/green button that
+    navigates or reloads). Renders the dim+blur wash and the pulsing 'Thinking...'-style pill as
+    the very last frame before Streamlit tears the script down and reruns it, so the click reads
+    as a quick transition instead of a hard cut. No placeholder/cleanup needed — the upcoming
+    rerun replaces the whole page anyway."""
+    st.markdown(
+        f"""<style>
+@keyframes nilornDimIn {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+@keyframes nilornThinkIn {{
+    from {{ opacity: 0; transform: translate(-50%, 12px) scale(0.96); }}
+    to   {{ opacity: 1; transform: translate(-50%, 0) scale(1); }}
+}}
+@keyframes nilornThinkDot {{
+    0%, 100% {{ transform: scale(1);    opacity: 1;    }}
+    50%      {{ transform: scale(0.55); opacity: 0.55; }}
+}}
+.nilorn-dim-once {{
+    position: fixed; inset: 0; z-index: 999997;
+    background: rgba(243, 240, 251, 0.38);
+    backdrop-filter: blur(2.5px); -webkit-backdrop-filter: blur(2.5px);
+    animation: nilornDimIn 0.25s ease forwards;
+    pointer-events: none;
+}}
+.nilorn-think-pill-once {{
+    position: fixed; left: 50%; bottom: 34px; z-index: 999998;
+    display: flex; align-items: center; gap: 10px;
+    background: #1c1c22; color: rgba(255, 255, 255, 0.78);
+    font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 600; font-size: 14.5px;
+    padding: 11px 20px 11px 15px; border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    animation: nilornThinkIn 0.25s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}}
+.nilorn-think-pill-once .dot {{
+    width: 9px; height: 9px; border-radius: 50%;
+    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
+    box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
+    animation: nilornThinkDot 1s ease-in-out infinite;
+}}
+</style>
+<div class="nilorn-dim-once"></div>
+<div class="nilorn-think-pill-once"><span class="dot"></span>{label}</div>""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
     """Biểu đồ cột gradient tím + đường nối phía trên + tooltip đen bo tròn — dùng chung cho MỌI
     nơi trong app cần biểu đồ cột đơn giản (thay cho st.bar_chart mặc định của Streamlit, vốn
@@ -3930,6 +3985,7 @@ except Exception as e:
     with st.expander("Technical details"):
         st.code(str(e))
     if st.button("Retry"):
+        show_transition_pill()
         st.rerun()
     st.stop()
 
@@ -3982,19 +4038,24 @@ with st.sidebar:
     st.markdown("")
     if st.button("📊  Dashboard", key="nav_dashboard", use_container_width=True):
         st.session_state.current_page = "dashboard"
+        show_transition_pill()
         st.rerun()
     if st.button("💬  Ask AI", key="nav_ask", use_container_width=True):
         st.session_state.current_page = "ask_ai"
+        show_transition_pill()
         st.rerun()
     with st.expander("More"):
         if st.button("✅ Review Taxonomy", key="nav_taxonomy", use_container_width=True):
             st.session_state.current_page = "taxonomy"
+            show_transition_pill()
             st.rerun()
         if st.button("📝 New Complaint (Manual)", key="nav_new_complaint", use_container_width=True):
             st.session_state.current_page = "new_complaint"
+            show_transition_pill()
             st.rerun()
         if st.button("🗄️ Data Lookup", key="nav_data_lookup", use_container_width=True):
             st.session_state.current_page = "data_lookup"
+            show_transition_pill()
             st.rerun()
 
 page = st.session_state.current_page
@@ -4024,6 +4085,7 @@ if page == "taxonomy":
     reviewer_id = reviewer_names[selected_name]
 
     if st.button("Refresh"):
+        show_transition_pill()
         st.rerun()
 
     with st.expander("Attach reference images for an existing Defect code"):
@@ -4044,6 +4106,7 @@ if page == "taxonomy":
                         render_zoomable_image(img_b64, width=150, caption=f"Image {i + 1} / Image {i + 1}")
                         if st.button("Delete", key=f"del_ref_img_{picked_defect_code}_{i}"):
                             remove_defect_reference_image(conn, picked_defect_code, i)
+                            show_transition_pill()
                             st.rerun()
             slots_left = MAX_DEFECT_REFERENCE_IMAGES - len(existing_ref_imgs)
             if slots_left > 0:
@@ -4061,6 +4124,7 @@ if page == "taxonomy":
                         )
                     else:
                         st.success(f"Reference images saved for {picked_defect_code}.")
+                    show_transition_pill()
                     st.rerun()
             else:
                 st.caption(f"Already at the {MAX_DEFECT_REFERENCE_IMAGES}-image limit — delete one to add a new one.")
@@ -4133,6 +4197,7 @@ if page == "taxonomy":
                             code_only = chosen.split(" — ")[0]
                             approve_match_existing(conn_f, sid, code_only, reviewer_id, complaint_id, kind, responsible_party)
                             st.session_state["needs_extra_refresh"] = True
+                            show_transition_pill()
                             st.rerun()
 
                 elif action == "This is new — add new code":
@@ -4170,11 +4235,13 @@ if page == "taxonomy":
                                 ref_b64_list = [base64.b64encode(f.getvalue()).decode("utf-8") for f in new_defect_ref_images[:MAX_DEFECT_REFERENCE_IMAGES]]
                                 add_defect_reference_images(conn_f, new_code.strip(), ref_b64_list)
                             st.session_state["needs_extra_refresh"] = True
+                            show_transition_pill()
                             st.rerun()
 
                 else:  # Từ chối / Reject
                     if st.button("Reject", key=f"btn_reject_{sid}"):
                         reject(conn_f, sid, reviewer_id)
+                        show_transition_pill()
                         st.rerun()
 
     render_pending_queue()
@@ -4190,8 +4257,10 @@ if page == "data_lookup":
         "blue",
     )
     if st.session_state.pop("needs_extra_refresh", False):
+        show_transition_pill()
         st.rerun()
     if st.button("Refresh", key="btn_refresh_data_tab"):
+        show_transition_pill()
         st.rerun()
 
     orphaned = find_orphaned_submissions(conn)
@@ -4211,6 +4280,7 @@ if page == "data_lookup":
                     repair_orphaned_submission(conn, ai_client_repair, *row)
                     progress.progress((i + 1) / len(orphaned))
                 st.success(f"Repaired {len(orphaned)} complaint(s).")
+                show_transition_pill()
                 st.rerun()
 
     with conn.cursor() as cur:
@@ -4348,6 +4418,7 @@ if page == "data_lookup":
                         cur.execute("update complaint set defect_photo = %s where complaint_id = %s;", (photo_b64, picked_id))
                     conn.commit()
                     st.success("Photo saved — re-download the Word file to get the latest version.")
+                    show_transition_pill()
                     st.rerun()
 
             has_root_cause = bool(full_report.get("Root cause"))
@@ -4376,6 +4447,7 @@ if page == "data_lookup":
                                 "complaint_id": picked_id,
                                 "message": f"✅ Added CAPA **{code_only_add}Added CAPA **{code_only_add}** — now in effect, see the list below.",
                             }
+                            show_transition_pill()
                             st.rerun()
                         elif new_capa_text_add.strip():
                             ai_client = get_ai_client()
@@ -4400,6 +4472,7 @@ if page == "data_lookup":
                                 "complaint_id": picked_id,
                                 "message": "Sent the new CAPA to the **approval queue** — go to 'Review Taxonomy' to approve it before it applies.",
                             }
+                            show_transition_pill()
                             st.rerun()
                         else:
                             st.warning("You haven't selected an existing code or entered a new CAPA description.")
@@ -4427,6 +4500,7 @@ if page == "data_lookup":
                             if st.button("Mark implemented", key=f"btn_impl_{capa_action_id}", type="primary"):
                                 mark_capa_implemented(conn, capa_action_id, impl_date)
                                 compute_and_update_complaint_status(conn, picked_id)
+                                show_transition_pill()
                                 st.rerun()
 
                         confirm_del = st.checkbox(
@@ -4437,6 +4511,7 @@ if page == "data_lookup":
                             delete_capa_action(conn, capa_action_id)
                             compute_and_update_complaint_status(conn, picked_id)
                             st.success("CAPA action deleted.")
+                            show_transition_pill()
                             st.rerun()
 
             missing_tags_now = compute_and_update_complaint_status(conn, picked_id)
@@ -4472,6 +4547,7 @@ if page == "data_lookup":
                         if st.button("Save result", key=f"btn_verif_{capa_action_id}", type="primary"):
                             submit_capa_verification(conn, capa_action_id, verif_choice, verif_date)
                             st.success("Verification result saved.")
+                            show_transition_pill()
                             st.rerun()
 
 
@@ -4725,6 +4801,7 @@ if page == "ask_ai":
                             st.session_state["sugg_result"] = (
                                 "Sent to the queue — go to 'Review Taxonomy' to view and process it."
                             )
+                            show_transition_pill()
                             st.rerun()
 
 # ------------------------------------------------------------
@@ -4808,6 +4885,7 @@ if page == "new_complaint":
                         "supplier_suggestion": supplier_suggestion,
                         "suggestion_source": suggestion_source,
                     }
+                    show_transition_pill()
                     st.rerun()
 
     email_extract_result = st.session_state.pop("email_extract_result", None)
@@ -5399,6 +5477,7 @@ if page == "new_complaint":
                 "capa_responsible": capa_responsible,
                 "staff": staff_choice,
             }
+            show_transition_pill()
             st.rerun()
 
     result_new = st.session_state.get("new_complaint_result")
@@ -5665,4 +5744,5 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
                     )
                     if st.button("View details →", key=f"card_detail_{r[idx['submission_id']]}"):
                         st.session_state.selected_submission_id = str(r[idx["submission_id"]])
+                        show_transition_pill()
                         st.rerun()
