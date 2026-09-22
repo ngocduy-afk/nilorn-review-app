@@ -3597,102 +3597,93 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
 
 
 def _water_loader_markup(label, uid):
-    """Shared markup for the water-ripple loading effect: a dim+blur wash behind expanding
-    concentric ripple rings (same visual language as the page-load splash), with the label
-    underneath. Used by both thinking_overlay (persistent, needs a unique uid per placeholder)
-    and show_transition_pill (one-shot, uid='once')."""
+    """Shared markup for the water-wave loading effect: a translucent, soft-edged band of light
+    that sweeps across the FULL page from right to left — like a wave of water passing over the
+    screen — instead of ripple rings radiating from a point. The band is semi-transparent so the
+    page underneath stays faintly visible through it (matching the reference video), with a small
+    label pill fixed at the bottom to say what's happening. Used by both thinking_overlay
+    (persistent, needs a unique uid per placeholder) and show_transition_pill (one-shot,
+    uid='once')."""
     return f"""<style>
-@keyframes nilornDimIn-{uid} {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
-@keyframes nilornLoaderIn-{uid} {{
-    from {{ opacity: 0; transform: translate(-50%, -50%) scale(0.92); }}
-    to   {{ opacity: 1; transform: translate(-50%, -50%) scale(1); }}
+@keyframes nilornSweepMove-{uid} {{
+    0%   {{ transform: skewX(-12deg) translateX(0); }}
+    100% {{ transform: skewX(-12deg) translateX(-220vw); }}
 }}
-@keyframes nilornRipple-{uid} {{
-    0%   {{ transform: scale(1);   opacity: 0.65; border-width: 2.5px; }}
-    100% {{ transform: scale(4.6); opacity: 0;    border-width: 0.5px; }}
-}}
-@keyframes nilornCorePulse-{uid} {{
-    0%, 100% {{ transform: scale(1); }}
-    50%      {{ transform: scale(1.18); }}
-}}
+@keyframes nilornWashIn-{uid} {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 @keyframes nilornLabelPulse-{uid} {{
     0%, 100% {{ opacity: 0.55; }}
     50%      {{ opacity: 1; }}
 }}
-.nilorn-dim-{uid} {{
+@keyframes nilornDot-{uid} {{
+    0%, 100% {{ transform: scale(1);    opacity: 1;    }}
+    50%      {{ transform: scale(0.55); opacity: 0.55; }}
+}}
+.nilorn-sweep-{uid} {{
     position: fixed;
     inset: 0;
     z-index: 999997;
-    background: rgba(243, 240, 251, 0.5);
-    backdrop-filter: blur(3px);
-    -webkit-backdrop-filter: blur(3px);
-    animation: nilornDimIn-{uid} 0.3s ease forwards;
+    overflow: hidden;
     pointer-events: none;
+    background: rgba(243, 240, 251, 0.10);
+    animation: nilornWashIn-{uid} 0.15s ease forwards;
 }}
-.nilorn-loader-{uid} {{
+.nilorn-sweep-{uid} .band {{
+    position: absolute;
+    top: -15%;
+    left: 100%;
+    width: 46vw;
+    height: 130%;
+    background: linear-gradient(100deg,
+        rgba(159, 148, 235, 0)    0%,
+        rgba(178, 166, 240, 0.28) 28%,
+        rgba(228, 221, 253, 0.72) 50%,
+        rgba(178, 166, 240, 0.28) 72%,
+        rgba(159, 148, 235, 0)    100%);
+    filter: blur(26px);
+    transform: skewX(-12deg) translateX(0);
+    animation: nilornSweepMove-{uid} 1.5s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+}}
+.nilorn-sweep-{uid} .band.b2 {{
+    width: 26vw;
+    opacity: 0.55;
+    animation-duration: 1.7s;
+    animation-delay: 0.1s;
+}}
+.nilorn-sweep-{uid} .label-pill {{
     position: fixed;
-    top: 50%;
     left: 50%;
-    z-index: 999998;
+    bottom: 34px;
+    transform: translateX(-50%);
     display: flex;
-    flex-direction: column;
     align-items: center;
-    gap: 16px;
-    animation: nilornLoaderIn-{uid} 0.25s ease forwards;
-    pointer-events: none;
-}}
-.nilorn-loader-{uid} .ripple-wrap {{
-    position: relative;
-    width: 132px;
-    height: 132px;
-}}
-.nilorn-loader-{uid} .ripple-core {{
-    position: absolute;
-    top: 50%; left: 50%;
-    width: 22px; height: 22px;
-    margin: -11px 0 0 -11px;
-    border-radius: 50%;
-    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
-    box-shadow: 0 0 18px rgba(127, 119, 221, 0.65);
-    animation: nilornCorePulse-{uid} 1.5s ease-in-out infinite;
-}}
-.nilorn-loader-{uid} .ripple-ring {{
-    position: absolute;
-    top: 50%; left: 50%;
-    width: 22px; height: 22px;
-    margin: -11px 0 0 -11px;
-    border-radius: 50%;
-    border: 2.5px solid rgba(127, 119, 221, 0.6);
-    opacity: 0;
-    animation: nilornRipple-{uid} 2.1s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
-}}
-.nilorn-loader-{uid} .ripple-ring.r2 {{ animation-delay: 0.5s; }}
-.nilorn-loader-{uid} .ripple-ring.r3 {{ animation-delay: 1.0s; }}
-.nilorn-loader-{uid} .loader-label {{
+    gap: 10px;
+    background: #1c1c22;
+    color: rgba(255, 255, 255, 0.78);
     font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 600;
     font-size: 14.5px;
-    color: #4a4470;
-    background: rgba(255, 255, 255, 0.7);
-    padding: 7px 16px;
+    padding: 11px 20px 11px 15px;
     border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
     animation: nilornLabelPulse-{uid} 1.4s ease-in-out infinite;
 }}
+.nilorn-sweep-{uid} .label-pill .dot {{
+    width: 9px; height: 9px; border-radius: 50%;
+    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
+    box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
+    animation: nilornDot-{uid} 1s ease-in-out infinite;
+}}
 </style>
-<div class="nilorn-dim-{uid}"></div>
-<div class="nilorn-loader-{uid}">
-    <div class="ripple-wrap">
-        <div class="ripple-ring r1"></div>
-        <div class="ripple-ring r2"></div>
-        <div class="ripple-ring r3"></div>
-        <div class="ripple-core"></div>
-    </div>
-    <div class="loader-label">{label}</div>
+<div class="nilorn-sweep-{uid}">
+    <span class="band b1"></span>
+    <span class="band b2"></span>
+    <div class="label-pill"><span class="dot"></span>{label}</div>
 </div>"""
 
 
 @contextlib.contextmanager
-def thinking_overlay(label="Thinking...", min_visible=1.0):
+def thinking_overlay(label="Thinking...", min_visible=1.6):
     """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
     (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
     the page-load splash — concentric rings pulsing outward from a glowing core, over a
@@ -3712,7 +3703,7 @@ def thinking_overlay(label="Thinking...", min_visible=1.0):
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading...", hold=1.2):
+def show_transition_pill(label="Loading...", hold=1.6):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
     navigates or reloads). Renders the same water-ripple loader as the very last frame before
