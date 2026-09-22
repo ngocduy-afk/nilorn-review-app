@@ -3193,16 +3193,16 @@ html, body, [class*="css"]  {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.6;
+    opacity: 0.9;
     background:
-        radial-gradient(ellipse 55% 45% at 18% 22%, rgba(148, 130, 232, 0.38), transparent 60%),
-        radial-gradient(ellipse 50% 50% at 82% 28%, rgba(168, 152, 238, 0.33), transparent 62%),
-        radial-gradient(ellipse 60% 55% at 50% 85%, rgba(190, 178, 244, 0.30), transparent 60%),
-        radial-gradient(ellipse 45% 40% at 8% 92%, rgba(205, 196, 247, 0.26), transparent 60%),
-        radial-gradient(ellipse 40% 40% at 95% 90%, rgba(127, 119, 221, 0.24), transparent 60%);
-    background-size: 160% 160%;
+        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.55), transparent 62%),
+        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.48), transparent 64%),
+        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.46), transparent 62%),
+        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.40), transparent 62%),
+        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.40), transparent 62%);
+    background-size: 150% 150%;
     animation: nilornWaterDrift 28s ease-in-out infinite;
-    filter: blur(6px);
+    filter: blur(3px);
 }
 @keyframes nilornWaterDrift {
     0%   { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
@@ -3452,7 +3452,7 @@ div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] > div[role="radi
     display: flex; gap: 12px; margin-top: 2px;
 }
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label {
-    flex: 1; border: 2px solid #e5e3da; border-radius: 20px; padding: 14px 18px !important;
+    flex: 1; border: 2px solid #e1defa; border-radius: 20px; padding: 14px 18px !important;
     margin: 0 !important; cursor: pointer; transition: all 0.15s ease; background: #ffffff;
 }
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label > div:first-child {
@@ -3527,7 +3527,7 @@ def render_badge(text, bg, color, border):
 
 
 def kind_badge_html(kind):
-    bg, color, border = KIND_BADGE_STYLE.get(kind, ("#f1efe8", "#2c2c2a", "#5f5e5a"))
+    bg, color, border = KIND_BADGE_STYLE.get(kind, ("#f0edfa", "#2c2c2a", "#5f5e5a"))
     return render_badge(kind, bg, color, border)
 
 
@@ -3542,7 +3542,7 @@ STATUS_BADGE_DISPLAY_LABELS = {
 
 
 def status_badge_html(status):
-    bg, color, border = STATUS_BADGE_STYLE.get(status, ("#f1efe8", "#2c2c2a", "#5f5e5a"))
+    bg, color, border = STATUS_BADGE_STYLE.get(status, ("#f0edfa", "#2c2c2a", "#5f5e5a"))
     display_text = STATUS_BADGE_DISPLAY_LABELS.get(status, status)
     return render_badge(display_text, bg, color, border)
 
@@ -3552,14 +3552,14 @@ SECTION_COLOR_STYLE = {
     "amber": ("#faeeda", "#854f0b"),
     "teal": ("#e1f5ee", "#085041"),
     "coral": ("#faece7", "#993c1d"),
-    "gray": ("#f1efe8", "#2c2c2a"),
+    "gray": ("#f0edfa", "#2c2c2a"),
 }
 
 DASHBOARD_BADGE_STYLE = {
     "coral": ("#faece7", "#993c1d", "#f0997b"),
     "amber": ("#faeeda", "#854f0b", "#ef9f27"),
     "teal": ("#e1f5ee", "#085041", "#5dcaa5"),
-    "gray": ("#f1efe8", "#2c2c2a", "#b4b2a9"),
+    "gray": ("#f0edfa", "#2c2c2a", "#b4b2a9"),
 }
 
 
@@ -5602,7 +5602,7 @@ if page == "dashboard":
     st.markdown(
         """<style>
 div[data-testid="stRadio"] > div[role="radiogroup"] {
-    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e5e3da;
+    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e1defa;
     display: inline-flex; width: fit-content; gap: 0;
 }
 div[data-testid="stRadio"] label {
@@ -5645,7 +5645,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             f"""<style>
 div[class*="st-key-dashboard_period_row"] {{
     display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
-    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e5e3da;
+    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e1defa;
 }}
 div[class*="st-key-dashboard_period_row"] div[data-testid="stButton"] {{ width: auto; }}
 div[class*="st-key-dashboard_period_row"] button {{
@@ -5864,7 +5864,7 @@ div[class*="st-key-dashboard_period_pill_{_period}"] button {{
             f"""<style>
 div[class*="st-key-dashboard_filter_row"] {{
     display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
-    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e5e3da;
+    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e1defa;
 }}
 div[class*="st-key-dashboard_filter_row"] div[data-testid="stButton"] {{ width: auto; }}
 div[class*="st-key-dashboard_filter_row"] button {{
@@ -5986,7 +5986,7 @@ div[class*="st-key-recent_card_teal_"]::after {
     transform: translate(calc(var(--ox, 0) * 0.6px), calc(var(--oy, 0) * 0.6px));
 }
 div[class*="st-key-card_detail_"] button {
-    background: #ffffff !important; color: #2c2c2a !important; border: 1px solid #e5e3da !important;
+    background: #ffffff !important; color: #2c2c2a !important; border: 1px solid #e1defa !important;
     border-radius: 999px !important; padding: 6px 18px !important; font-size: 13px !important;
     font-weight: 600 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
     transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
