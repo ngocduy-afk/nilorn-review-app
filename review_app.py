@@ -3440,10 +3440,12 @@ div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-typ
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):hover {
     background: #f3f9ee;
 }
-div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) {
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked),
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1)[data-selected="true"] {
     background: #eaf3de; border-color: #3b6d11; box-shadow: 0 0 0 1px #3b6d11;
 }
-div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) p {
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1):has(input:checked) p,
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(1)[data-selected="true"] p {
     color: #27500a;
 }
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2) {
@@ -3452,10 +3454,12 @@ div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-typ
 div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):hover {
     background: #fdf3f3;
 }
-div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) {
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked),
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2)[data-selected="true"] {
     background: #fcebeb; border-color: #a32d2d; box-shadow: 0 0 0 1px #a32d2d;
 }
-div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) p {
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2):has(input:checked) p,
+div[class*="st-key-validity_radio_"] div[data-testid="stRadio"] label:nth-of-type(2)[data-selected="true"] p {
     color: #791f1f;
 }
 </style>""",
@@ -5575,8 +5579,10 @@ div[data-testid="stRadio"] label {
     background: transparent; border-radius: 20px; padding: 5px 16px !important; margin: 0 !important;
     cursor: pointer; transition: background 0.15s ease;
 }
-div[data-testid="stRadio"] label:has(input:checked) { background: #7F77DD; }
-div[data-testid="stRadio"] label:has(input:checked) p { color: #ffffff !important; font-weight: 600; }
+div[data-testid="stRadio"] label:has(input:checked),
+div[data-testid="stRadio"] label[data-selected="true"] { background: #7F77DD; }
+div[data-testid="stRadio"] label:has(input:checked) p,
+div[data-testid="stRadio"] label[data-selected="true"] p { color: #ffffff !important; font-weight: 600; }
 div[data-testid="stRadio"] label div[data-testid="stMarkdownContainer"] p { font-size: 13px; margin: 0; }
 div[data-testid="stRadio"] label > div:first-child { display: none; }
 </style>""",
@@ -5759,27 +5765,18 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
         n_missing = sum(1 for r in period_rows if _compute_missing_tags(r))
         n_closed = len(period_rows) - n_missing
 
-        # Options are fixed keys ("not_closed"/"closed"/"all"), NOT the label strings themselves —
-        # the labels embed live counts (n_missing/n_closed/len(period_rows)) that change as data
-        # changes (a complaint gets closed, the period picker changes, etc). If the option list were
-        # the label strings, a stored selection like "Not Closed (1)" would stop matching any current
-        # option the moment the count changes to "Not Closed (0)" — Streamlit then silently falls
-        # back, and the filter can end up out of sync with what's visually highlighted. Keying by a
-        # stable id and only using format_func for display avoids that entirely.
-        _filter_labels = {
-            "not_closed": f"Not Closed ({n_missing})",
-            "closed": f"Closed ({n_closed})",
-            "all": f"All ({len(period_rows)})",
-        }
+        # Options are fixed keys ("not_closed"/"closed"/"all") with a STATIC label ("Not Closed",
+        # no number). Verified with a Playwright test against a standalone Streamlit repro: when the
+        # label text embeds a live count (e.g. "Not Closed (7)") and that count changes between
+        # reruns (switching Month/Quarter/Year, a complaint getting closed, ...) while the SELECTED
+        # option stays the same, Streamlit/react-aria fails to re-sync the option's actual `checked`
+        # DOM property on that render — the pill silently shows as unselected (or defaults to the
+        # first option) even though st.radio()'s Python return value is still correct and the cards
+        # below are filtered correctly. This is a frontend rendering limitation, not something a CSS
+        # selector can work around. Fix: keep the option text 100% static across every render, and
+        # show the live counts separately (as a caption below the pills) instead of inside them.
+        _filter_labels = {"not_closed": "Not Closed", "closed": "Closed", "all": "All"}
         _filter_keys = list(_filter_labels.keys())
-        # Explicitly pin the displayed default to whatever was already chosen. Without this, going
-        # to a "View details" page (which doesn't render this radio at all) and back causes Streamlit
-        # to remount the widget from scratch — its RETURN value still correctly restores from
-        # session_state (so the cards below were filtering correctly all along), but the pill shown
-        # as "checked" on that first remounted render silently reverts to the first option
-        # ("Not Closed") regardless of what was actually selected before. Passing `index=` computed
-        # from the stored value forces the visual state to match reality on every render, including
-        # this first-mount-after-remount case.
         _stored_filter = st.session_state.get("dashboard_card_filter")
         _filter_default_index = _filter_keys.index(_stored_filter) if _stored_filter in _filter_keys else 0
         filter_pick = st.radio(
@@ -5789,6 +5786,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
             format_func=lambda k: _filter_labels[k],
             horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
         )
+        st.caption(f"Not Closed ({n_missing}) · Closed ({n_closed}) · All ({len(period_rows)})")
 
         if filter_pick == "not_closed":
             filtered_card_rows = [r for r in period_rows if _compute_missing_tags(r)]
