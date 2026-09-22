@@ -3805,10 +3805,10 @@ def show_transition_pill(label="Loading..."):
 
 
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
-    """Biểu đồ cột gradient tím + đường nối phía trên + tooltip đen bo tròn — dùng chung cho MỌI
-    nơi trong app cần biểu đồ cột đơn giản (thay cho st.bar_chart mặc định của Streamlit, vốn
-    không tùy biến được màu sắc). chart_key cần DUY NHẤT cho mỗi lần gọi trên cùng 1 trang (dùng
-    làm id của thẻ canvas), tránh trùng lặp khi có nhiều biểu đồ cùng lúc."""
+    """Biểu đồ cột tím phẳng (không gradient) + đường nối phía trên + tooltip đen bo tròn — dùng
+    chung cho MỌI nơi trong app cần biểu đồ cột đơn giản (thay cho st.bar_chart mặc định của
+    Streamlit, vốn không tùy biến được màu sắc). chart_key cần DUY NHẤT cho mỗi lần gọi trên cùng
+    1 trang (dùng làm id của thẻ canvas), tránh trùng lặp khi có nhiều biểu đồ cùng lúc."""
     labels_json = json.dumps([str(l) for l in labels])
     data_json = json.dumps([float(v) for v in values])
     suffix_json = json.dumps(f" {value_suffix}" if value_suffix else "")
@@ -3826,10 +3826,6 @@ def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart
             const suffix = {suffix_json};
             const ctx = document.getElementById('{canvas_id}').getContext('2d');
 
-            const gradient = ctx.createLinearGradient(0, 0, 0, {height - 30});
-            gradient.addColorStop(0, '#9c6ade');
-            gradient.addColorStop(1, 'rgba(200, 170, 235, 0.4)');
-
             new Chart(ctx, {{
                 type: 'bar',
                 data: {{
@@ -3838,7 +3834,7 @@ def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart
                         {{
                             type: 'bar',
                             data: data,
-                            backgroundColor: gradient,
+                            backgroundColor: 'rgba(115, 87, 217, 0.22)',
                             borderRadius: {{ topLeft: 8, topRight: 8 }},
                             borderSkipped: false,
                             barThickness: 32,
@@ -3847,11 +3843,11 @@ def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart
                         {{
                             type: 'line',
                             data: data,
-                            borderColor: '#7F3FBF',
+                            borderColor: '#7357D9',
                             borderWidth: 2,
                             pointRadius: 0,
                             pointHoverRadius: 5,
-                            pointBackgroundColor: '#7F3FBF',
+                            pointBackgroundColor: '#7357D9',
                             tension: 0,
                             fill: false,
                             order: 1,
@@ -3879,7 +3875,7 @@ def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart
                     scales: {{
                         y: {{
                             beginAtZero: true,
-                            grid: {{ color: 'rgba(0,0,0,0.06)' }},
+                            grid: {{ color: '#EAECF0' }},
                             ticks: {{ color: '#9c9a92', font: {{ size: 11 }} }},
                         }},
                         x: {{
