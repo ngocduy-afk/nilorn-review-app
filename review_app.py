@@ -35,6 +35,7 @@ import requests
 import uuid
 import re
 import difflib
+import unicodedata
 import smtplib
 from email.mime.text import MIMEText
 import matplotlib
@@ -2085,6 +2086,35 @@ def normalize_submission_row_for_excel(cols, row):
     }
 
 
+_LOOKUP_NAME_STOPWORDS = {
+    # Cụm pháp lý/chung chung tiếng Việt (đã bỏ dấu) — không giúp phân biệt nhà cung cấp này với
+    # nhà cung cấp khác nên loại khỏi bước so khớp theo từ khóa đặc trưng.
+    "cong", "ty", "tnhh", "cp", "cty", "mot", "thanh", "vien", "tap", "doan",
+    "xi", "nghiep", "san", "xuat", "thuong", "mai", "dich", "vu", "quoc", "te",
+    "viet", "nam",
+    # Cụm pháp lý/chung chung tiếng Anh
+    "co", "ltd", "limited", "inc", "incorporated", "corp", "corporation",
+    "company", "companies", "jsc", "plc", "llc", "pte", "sdn", "bhd", "gmbh",
+    "vietnam", "vn", "the", "and",
+}
+
+
+def _strip_accents(s):
+    """Bỏ dấu tiếng Việt (NFD rồi loại các ký tự combining) — cho phép so khớp "việt nam" với
+    "vietnam", "công ty" với "cong ty", v.v. mà không cần bảng chuyển đổi thủ công."""
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn")
+
+
+def _distinctive_name_tokens(name):
+    """Tách tên công ty thành tập từ 'đặc trưng' — bỏ dấu, tách từ, loại các từ pháp lý/chung
+    chung (TNHH, Co., Ltd, Vietnam...) và từ quá ngắn. Dùng để so khớp qua tên thương hiệu (vd
+    "Samson") khi 2 cách viết tên (tiếng Việt mô tả đầy đủ vs tên giao dịch tiếng Anh) khác nhau
+    gần như hoàn toàn về từ vựng/thứ tự, không share chuỗi con hay đạt tỉ lệ ký tự đủ cao."""
+    norm = _strip_accents(name).lower()
+    words = re.findall(r"[a-z0-9]+", norm)
+    return {w for w in words if len(w) >= 3 and w not in _LOOKUP_NAME_STOPWORDS}
+
+
 def _fuzzy_match_lookup_code(conn, table, code_col, name_col, typed_name):
     """Đối chiếu gần đúng 1 tên (Vendor/Client) với danh sách mã chuẩn — dùng lại đúng nguyên lý
     match_vendor() bên supplier_portal.py, áp dụng cho cả complaint nhập tay (trước đây bị bỏ
@@ -2112,6 +2142,30 @@ def _fuzzy_match_lookup_code(conn, table, code_col, name_col, typed_name):
         if substring_candidates:
             substring_candidates.sort(key=lambda x: x[1])
             return substring_candidates[0][0]
+
+    # 2.5) Khớp qua từ khóa đặc trưng (thường là tên thương hiệu, vd "Samson") sau khi bỏ dấu và
+    # loại các từ pháp lý/chung chung — bắt được trường hợp supplier điền tên tiếng Việt mô tả đầy
+    # đủ (VD "CÔNG TY TNHH IN ẤN PHỤ LIỆU MAY MẶC SAMSON (VIỆT NAM)") trong khi vendor_lookup lưu
+    # tên giao dịch tiếng Anh (VD "Samson (Vietnam) Printing & Garment Access. Co.LTD") — 2 chuỗi
+    # này gần như không share chuỗi con nào và tỉ lệ SequenceMatcher ở bước 3 quá thấp (từ vựng và
+    # thứ tự từ khác nhau hoàn toàn), dù rõ ràng cùng 1 nhà cung cấp qua từ khóa "samson".
+    typed_tokens = _distinctive_name_tokens(typed_name)
+    if typed_tokens:
+        token_candidates = []
+        for code, name in rows:
+            shared = typed_tokens & _distinctive_name_tokens(name)
+            # Chỉ tính là khớp nếu có ít nhất 1 từ khóa đủ đặc trưng (>=4 ký tự) trùng nhau — tránh
+            # khớp nhầm chỉ vì 2 tên cùng lọt qua 1 từ ngắn/chung chung nào đó không nằm trong
+            # stopword list.
+            strong_shared = {w for w in shared if len(w) >= 4}
+            if strong_shared:
+                token_candidates.append((code, len(strong_shared), len(name or "")))
+        if token_candidates:
+            # Ưu tiên vendor có nhiều từ khóa đặc trưng trùng nhất; hoà thì chọn tên ngắn hơn
+            # (giống nguyên lý bước 2 — tên ngắn hơn thường là khớp "gọn" hơn, ít khả năng trùng
+            # ngẫu nhiên với nhiều vendor khác nhau).
+            token_candidates.sort(key=lambda x: (-x[1], x[2]))
+            return token_candidates[0][0]
 
     # 3) Khớp gần đúng theo tỉ lệ tương đồng chuỗi — dành cho lỗi chính tả nhẹ.
     best_code, best_ratio = None, 0.0
