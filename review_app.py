@@ -5877,21 +5877,66 @@ div[class*="st-key-dashboard_filter_pill_{_current_filter}"] button {{
         # gets its own "recent_card_" key prefix instead of reusing zone_card's CSS.
         st.markdown(
             """<style>
+div[class*="st-key-recent_card_coral_"],
+div[class*="st-key-recent_card_teal_"] {
+    --rx: 0deg; --ry: 0deg; --mx: 50%; --my: 50%; --ox: 0; --oy: 0; --ty: 0px; --sc: 1;
+    position: relative; overflow: hidden; border-radius: 14px;
+    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1rem;
+    transform: perspective(1100px) rotateX(var(--rx)) rotateY(var(--ry)) translateY(var(--ty)) scale(var(--sc));
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 260ms cubic-bezier(0.22, 1, 0.36, 1),
+                border-color 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+    animation: fcCardIn 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+div[class*="st-key-recent_card_coral_"] > div,
+div[class*="st-key-recent_card_teal_"] > div { position: relative; z-index: 1; }
+/* Uses the standalone `translate` property (not `transform: translateY()`) for the entrance slide —
+   `transform` is reserved entirely for the interactive tilt/lift system below. A CSS animation with
+   fill-mode "both" permanently pins whatever it animates once it completes; if this entrance also
+   animated `transform`, it would silently lock it forever and the mouse-driven tilt/lift would never
+   show (verified this exact failure with a Playwright test before switching to `translate`). */
+div[class*="st-key-recent_card_coral_"],
+div[class*="st-key-recent_card_teal_"] { translate: 0 0; }
+@keyframes fcCardIn {
+    from { opacity: 0; translate: 0 8px; }
+    to   { opacity: 1; translate: 0 0; }
+}
 div[class*="st-key-recent_card_coral_"] {
     background: linear-gradient(165deg, #ffffff 55%, #fdf0ea 100%);
-    border: 1px solid #f1ddd3; border-left: 4px solid #d8492c; border-radius: 14px;
-    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1rem; position: relative; overflow: hidden;
+    border: 1px solid #f1ddd3; border-left: 4px solid #d8492c;
     box-shadow: 0 2px 10px rgba(30, 20, 15, 0.05);
 }
 div[class*="st-key-recent_card_teal_"] {
     background: linear-gradient(165deg, #ffffff 55%, #eaf8f0 100%);
-    border: 1px solid #d7ecdf; border-left: 4px solid #1f9d55; border-radius: 14px;
-    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1rem; position: relative; overflow: hidden;
+    border: 1px solid #d7ecdf; border-left: 4px solid #1f9d55;
     box-shadow: 0 2px 10px rgba(15, 30, 20, 0.05);
 }
+div[class*="st-key-recent_card_coral_"]:hover {
+    border-color: #c23f22; box-shadow: 0 14px 28px rgba(180, 55, 25, 0.14);
+}
+div[class*="st-key-recent_card_teal_"]:hover {
+    border-color: #178a49; box-shadow: 0 14px 28px rgba(15, 120, 70, 0.14);
+}
+/* Mouse-follow soft light/reflection — position driven by --mx/--my (set via JS on mousemove),
+   visibility toggled by plain CSS :hover so it needs no JS just to show/hide. */
+div[class*="st-key-recent_card_coral_"]::before,
+div[class*="st-key-recent_card_teal_"]::before {
+    content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0;
+    transition: opacity 260ms ease; border-radius: inherit;
+}
+div[class*="st-key-recent_card_coral_"]::before {
+    background: radial-gradient(180px circle at var(--mx) var(--my), rgba(216, 73, 44, 0.12), transparent 65%);
+}
+div[class*="st-key-recent_card_teal_"]::before {
+    background: radial-gradient(180px circle at var(--mx) var(--my), rgba(255, 255, 255, 0.45), transparent 65%);
+}
+div[class*="st-key-recent_card_coral_"]:hover::before,
+div[class*="st-key-recent_card_teal_"]:hover::before { opacity: 1; }
+/* Decorative wave stays under everything else. */
 div[class*="st-key-recent_card_coral_"]::after,
 div[class*="st-key-recent_card_teal_"]::after {
-    content: ""; position: absolute; right: 0; bottom: 0; width: 150px; height: 100px;
+    content: ""; position: absolute; right: 0; bottom: 0; width: 150px; height: 100px; z-index: 0;
     pointer-events: none; background-repeat: no-repeat; background-position: bottom right;
     background-size: 150px 100px;
 }
@@ -5901,14 +5946,47 @@ div[class*="st-key-recent_card_coral_"]::after {
 div[class*="st-key-recent_card_teal_"]::after {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='100' viewBox='0 0 150 100'%3E%3Cpath d='M0 70 C 30 40, 60 90, 95 55 S 150 30, 150 30 V100 H0 Z' fill='%231f9d55' opacity='0.10'/%3E%3Cpath d='M20 85 C 50 60, 80 100, 115 70 S 150 55, 150 55 V100 H20 Z' fill='%231f9d55' opacity='0.14'/%3E%3C/svg%3E");
 }
+/* Parallax — icon moves a bit more than the title, both driven by the same --ox/--oy JS sets. */
+.fc-card-icon {
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translate(calc(var(--ox, 0) * 1.6px), calc(var(--oy, 0) * 1.6px));
+}
+.fc-card-title {
+    transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform: translate(calc(var(--ox, 0) * 0.6px), calc(var(--oy, 0) * 0.6px));
+}
 div[class*="st-key-card_detail_"] button {
     background: #ffffff !important; color: #2c2c2a !important; border: 1px solid #e5e3da !important;
     border-radius: 999px !important; padding: 6px 18px !important; font-size: 13px !important;
     font-weight: 600 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+                box-shadow 200ms cubic-bezier(0.22, 1, 0.36, 1),
+                filter 200ms ease, background 150ms ease;
 }
-div[class*="st-key-card_detail_"] button:hover { background: #f5f4ef !important; }
+div[class*="st-key-card_detail_"] button::after {
+    content: "→"; display: inline-block; margin-left: 8px;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+div[class*="st-key-card_detail_"] button:hover {
+    background: #f5f4ef !important; filter: brightness(1.03);
+    box-shadow: 0 5px 12px rgba(0,0,0,0.08) !important; transform: scale(1.01);
+}
+div[class*="st-key-card_detail_"] button:hover::after { transform: translateX(3px); }
+div[class*="st-key-card_detail_"] button:active { transform: scale(0.985) !important; }
 div[class*="st-key-recent_card_coral_"] .fc-badge,
 div[class*="st-key-recent_card_teal_"] .fc-badge { padding: 3px 10px; font-size: 10.5px; }
+@media (prefers-reduced-motion: reduce) {
+    div[class*="st-key-recent_card_coral_"],
+    div[class*="st-key-recent_card_teal_"] {
+        transform: none !important; animation: none !important;
+        transition: box-shadow 150ms ease, border-color 150ms ease !important;
+    }
+    div[class*="st-key-recent_card_coral_"]::before,
+    div[class*="st-key-recent_card_teal_"]::before { display: none !important; }
+    .fc-card-icon, .fc-card-title { transform: none !important; }
+    div[class*="st-key-card_detail_"] button,
+    div[class*="st-key-card_detail_"] button::after { transition: none !important; }
+}
 </style>""",
             unsafe_allow_html=True,
         )
@@ -5919,32 +5997,39 @@ div[class*="st-key-recent_card_teal_"] .fc-badge { padding: 3px 10px; font-size:
                 missing_tags = _compute_missing_tags(r)
                 _sid = r[idx["submission_id"]]
                 zone_color = "coral" if missing_tags else "teal"
-                with st.container(key=f"recent_card_{zone_color}_{_sid}"):
+                _card_key = f"recent_card_{zone_color}_{_sid}"
+                # Small per-card <style> just to stagger the entrance animation (card 1 at 0ms, card
+                # 2 at 50ms, ...), capped so a long list doesn't feel slow to finish appearing.
+                st.markdown(
+                    f'<style>div[class*="st-key-{_card_key}"] '
+                    f'{{ animation-delay: {min(i, 7) * 50}ms; }}</style>',
+                    unsafe_allow_html=True,
+                )
+                with st.container(key=_card_key):
                     if missing_tags:
                         badges_html = "".join(status_badge_html(t) for t in missing_tags)
                         icon_html = (
-                            '<div style="width:28px;height:28px;border-radius:50%;background:#d8492c;'
-                            'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                            '<div class="fc-card-icon" style="width:28px;height:28px;border-radius:50%;'
+                            'background:#d8492c;display:flex;align-items:center;justify-content:center;'
+                            'flex-shrink:0;">'
                             '<span style="color:#fff;font-weight:800;font-size:15px;line-height:1;">!</span></div>'
                         )
                     else:
                         badges_html = status_badge_html("Closed")
                         icon_html = (
-                            '<div style="width:28px;height:28px;border-radius:50%;background:#1f9d55;'
-                            'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                            '<div class="fc-card-icon" style="width:28px;height:28px;border-radius:50%;'
+                            'background:#1f9d55;display:flex;align-items:center;justify-content:center;'
+                            'flex-shrink:0;">'
                             '<svg width="14" height="14" viewBox="0 0 24 24" fill="none">'
                             '<path d="M5 13l4 4L19 7" stroke="white" stroke-width="3" '
                             'stroke-linecap="round" stroke-linejoin="round"/></svg></div>'
                         )
                     supplier_display = r[idx["vendor_name_matched"]] or r[idx["supplier_name_raw"]]
                     st.markdown(
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
-                        f'<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">'
+                        f'<div style="display:flex;align-items:center;gap:10px;min-width:0;">'
                         f'{icon_html}'
-                        f'<span style="font-weight:700;font-size:14.5px;color:#1a2b3a;white-space:nowrap;'
-                        f'overflow:hidden;text-overflow:ellipsis;">{supplier_display}</span>'
-                        f'</div>'
-                        f'<span style="color:#b7b5ac;font-size:15px;flex-shrink:0;">→</span>'
+                        f'<span class="fc-card-title" style="font-weight:700;font-size:14.5px;color:#1a2b3a;'
+                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{supplier_display}</span>'
                         f'</div>'
                         f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 2px;">{badges_html}</div>',
                         unsafe_allow_html=True,
@@ -5957,7 +6042,85 @@ div[class*="st-key-recent_card_teal_"] .fc-badge { padding: 3px 10px; font-size:
                         f'{r[idx["record_date"]].strftime("%d/%m/%Y") if r[idx["record_date"]] else "(unknown)"}</div>',
                         unsafe_allow_html=True,
                     )
-                    if st.button("📋  View details  →", key=f"card_detail_{_sid}"):
+                    if st.button("📋  View details", key=f"card_detail_{_sid}"):
                         st.session_state.selected_submission_id = str(_sid)
                         show_transition_pill()
                         st.rerun()
+
+        # Mouse-follow 3D tilt + parallax driver. CSS alone can style :hover, but tracking the
+        # cursor's position INSIDE each card (for the tilt angle, the light position, and the
+        # parallax offset) needs JS. components.html renders in its own iframe, but — same trick
+        # already used elsewhere in this file (the Ctrl+V paste zone) — window.parent.document
+        # reaches the real page, so listeners can be attached to the actual card elements. Height=0
+        # keeps it invisible; it only ever writes to CSS custom properties (--rx/--ry/--mx/--my/
+        # --ox/--oy/--ty/--sc) that the stylesheet above already knows how to render, batched via
+        # requestAnimationFrame so mousemove never triggers more than one style write per frame.
+        # Cards get re-created on every Streamlit rerun (new filter, new page, ...), so a light
+        # interval re-scan picks up new ones instead of binding once and going stale.
+        components.html(
+            """
+            <script>
+            (function() {
+                const doc = window.parent.document;
+                let reduceMotion = false;
+                try {
+                    reduceMotion = window.parent.matchMedia
+                        && window.parent.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                } catch (e) {}
+                if (reduceMotion) return;
+
+                function bind(card) {
+                    if (card.dataset.fcTiltBound) return;
+                    card.dataset.fcTiltBound = "1";
+
+                    let raf = null;
+                    let pending = null;
+
+                    function flush() {
+                        raf = null;
+                        if (!pending) return;
+                        const p = pending;
+                        card.style.setProperty('--rx', p.rx + 'deg');
+                        card.style.setProperty('--ry', p.ry + 'deg');
+                        card.style.setProperty('--mx', p.mx + '%');
+                        card.style.setProperty('--my', p.my + '%');
+                        card.style.setProperty('--ox', p.ox);
+                        card.style.setProperty('--oy', p.oy);
+                        card.style.setProperty('--ty', p.ty + 'px');
+                        card.style.setProperty('--sc', p.sc);
+                    }
+
+                    function schedule(p) {
+                        pending = p;
+                        if (raf === null) raf = requestAnimationFrame(flush);
+                    }
+
+                    card.addEventListener('mousemove', function(e) {
+                        const rect = card.getBoundingClientRect();
+                        const px = (e.clientX - rect.left) / rect.width;
+                        const py = (e.clientY - rect.top) / rect.height;
+                        schedule({
+                            rx: (0.5 - py) * 5, ry: (px - 0.5) * 5,
+                            mx: px * 100, my: py * 100,
+                            ox: (px - 0.5) * 4, oy: (py - 0.5) * 4,
+                            ty: -4, sc: 1.01,
+                        });
+                    });
+                    card.addEventListener('mouseenter', function() {
+                        schedule({ rx: 0, ry: 0, mx: 50, my: 50, ox: 0, oy: 0, ty: -4, sc: 1.01 });
+                    });
+                    card.addEventListener('mouseleave', function() {
+                        schedule({ rx: 0, ry: 0, mx: 50, my: 50, ox: 0, oy: 0, ty: 0, sc: 1 });
+                    });
+                }
+
+                function scan() {
+                    doc.querySelectorAll('[class*="st-key-recent_card_"]').forEach(bind);
+                }
+                scan();
+                setInterval(scan, 800);
+            })();
+            </script>
+            """,
+            height=0,
+        )
