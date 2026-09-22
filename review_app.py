@@ -5759,15 +5759,28 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
         n_missing = sum(1 for r in period_rows if _compute_missing_tags(r))
         n_closed = len(period_rows) - n_missing
 
+        # Options are fixed keys ("not_closed"/"closed"/"all"), NOT the label strings themselves —
+        # the labels embed live counts (n_missing/n_closed/len(period_rows)) that change as data
+        # changes (a complaint gets closed, the period picker changes, etc). If the option list were
+        # the label strings, a stored selection like "Not Closed (1)" would stop matching any current
+        # option the moment the count changes to "Not Closed (0)" — Streamlit then silently falls
+        # back, and the filter can end up out of sync with what's visually highlighted. Keying by a
+        # stable id and only using format_func for display avoids that entirely.
+        _filter_labels = {
+            "not_closed": f"Not Closed ({n_missing})",
+            "closed": f"Closed ({n_closed})",
+            "all": f"All ({len(period_rows)})",
+        }
         filter_pick = st.radio(
             "Filter by status",
-            [f"Not Closed ({n_missing})", f"Closed ({n_closed})", f"All ({len(period_rows)})"],
+            list(_filter_labels.keys()),
+            format_func=lambda k: _filter_labels[k],
             horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
         )
 
-        if filter_pick.startswith("Not Closed"):
+        if filter_pick == "not_closed":
             filtered_card_rows = [r for r in period_rows if _compute_missing_tags(r)]
-        elif filter_pick.startswith("Closed"):
+        elif filter_pick == "closed":
             filtered_card_rows = [r for r in period_rows if not _compute_missing_tags(r)]
         else:
             filtered_card_rows = period_rows
