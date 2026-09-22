@@ -16,6 +16,7 @@ import streamlit.components.v1 as components
 import base64
 import os
 import contextlib
+import time
 
 # Logo Nilorn (nhung san base64, khong can file rieng trong repo) — dung lam header cho moi
 # bao cao Word/PDF tai xuong. Anh da duoc resize nho (500px ngang) de giu code gon nhe.
@@ -3642,31 +3643,31 @@ def _water_loader_markup(label, uid):
 }}
 .nilorn-loader-{uid} .ripple-wrap {{
     position: relative;
-    width: 108px;
-    height: 108px;
+    width: 132px;
+    height: 132px;
 }}
 .nilorn-loader-{uid} .ripple-core {{
     position: absolute;
     top: 50%; left: 50%;
-    width: 20px; height: 20px;
-    margin: -10px 0 0 -10px;
+    width: 22px; height: 22px;
+    margin: -11px 0 0 -11px;
     border-radius: 50%;
     background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
-    box-shadow: 0 0 16px rgba(127, 119, 221, 0.6);
-    animation: nilornCorePulse-{uid} 1.4s ease-in-out infinite;
+    box-shadow: 0 0 18px rgba(127, 119, 221, 0.65);
+    animation: nilornCorePulse-{uid} 1.5s ease-in-out infinite;
 }}
 .nilorn-loader-{uid} .ripple-ring {{
     position: absolute;
     top: 50%; left: 50%;
-    width: 20px; height: 20px;
-    margin: -10px 0 0 -10px;
+    width: 22px; height: 22px;
+    margin: -11px 0 0 -11px;
     border-radius: 50%;
-    border: 2px solid rgba(127, 119, 221, 0.55);
+    border: 2.5px solid rgba(127, 119, 221, 0.6);
     opacity: 0;
-    animation: nilornRipple-{uid} 1.7s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+    animation: nilornRipple-{uid} 2.1s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
 }}
-.nilorn-loader-{uid} .ripple-ring.r2 {{ animation-delay: 0.42s; }}
-.nilorn-loader-{uid} .ripple-ring.r3 {{ animation-delay: 0.85s; }}
+.nilorn-loader-{uid} .ripple-ring.r2 {{ animation-delay: 0.5s; }}
+.nilorn-loader-{uid} .ripple-ring.r3 {{ animation-delay: 1.0s; }}
 .nilorn-loader-{uid} .loader-label {{
     font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     font-weight: 600;
@@ -3691,29 +3692,35 @@ def _water_loader_markup(label, uid):
 
 
 @contextlib.contextmanager
-def thinking_overlay(label="Thinking..."):
+def thinking_overlay(label="Thinking...", min_visible=1.0):
     """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
     (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
     the page-load splash — concentric rings pulsing outward from a glowing core, over a
     dimmed+blurred background — so every loading moment in the app reads as the same "water"
-    motion. Disappears the moment the block finishes (the fresh content is already rendered
-    underneath, so it reads as a reveal rather than a hard cut)."""
+    motion. Disappears once the block finishes AND at least `min_visible` seconds have passed
+    (some DB calls return almost instantly, which would otherwise flash the ripple by too fast
+    to actually see), so it reads as a clear reveal rather than a hard cut."""
     placeholder = st.empty()
     placeholder.markdown(_water_loader_markup(label, f"t{id(placeholder)}"), unsafe_allow_html=True)
+    start = time.time()
     try:
         yield
     finally:
+        elapsed = time.time() - start
+        if elapsed < min_visible:
+            time.sleep(min_visible - elapsed)
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading..."):
+def show_transition_pill(label="Loading...", hold=1.2):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
     navigates or reloads). Renders the same water-ripple loader as the very last frame before
-    Streamlit tears the script down and reruns it, so the click reads as a quick water-like
-    transition instead of a hard cut. No placeholder/cleanup needed — the upcoming rerun
-    replaces the whole page anyway."""
+    Streamlit tears the script down and reruns it, then holds for `hold` seconds so the ripple
+    is clearly visible before the page transitions — a bare markdown call would otherwise be
+    replaced by the rerun almost immediately, flashing by too fast to read as "water"."""
     st.markdown(_water_loader_markup(label, "once"), unsafe_allow_html=True)
+    time.sleep(hold)
 
 
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
