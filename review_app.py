@@ -5804,18 +5804,20 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 
         st.markdown(
             f"""<style>
-div[class*="st-key-dashboard_filter_row"] {{ display: flex; flex-direction: row; gap: 6px; }}
+div[class*="st-key-dashboard_filter_row"] {{
+    display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
+    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e5e3da;
+}}
 div[class*="st-key-dashboard_filter_row"] div[data-testid="stButton"] {{ width: auto; }}
 div[class*="st-key-dashboard_filter_row"] button {{
-    background: #ffffff !important; color: #4a4a45 !important; border: 1px solid #e5e3da !important;
+    background: transparent !important; color: #4a4a45 !important; border: none !important;
     border-radius: 20px !important; padding: 5px 16px !important; font-size: 13px !important;
     font-weight: 400 !important; box-shadow: none !important; transform: none !important;
     white-space: nowrap;
 }}
-div[class*="st-key-dashboard_filter_row"] button:hover {{ background: #f5f4ef !important; }}
+div[class*="st-key-dashboard_filter_row"] button:hover {{ background: rgba(0, 0, 0, 0.05) !important; }}
 div[class*="st-key-dashboard_filter_pill_{_current_filter}"] button {{
     background: #7F77DD !important; color: #ffffff !important; font-weight: 600 !important;
-    border-color: #7F77DD !important;
 }}
 </style>""",
             unsafe_allow_html=True,
