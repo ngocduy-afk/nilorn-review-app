@@ -3157,7 +3157,7 @@ if "nilorn_splash_shown" not in st.session_state:
             <div class="ripple-ring r3"></div>
             <div class="ripple-core"></div>
         </div>
-        <div class="splash-brand">NILORN&nbsp;<span>HUB</span></div>
+        <div class="splash-brand">NILORN&nbsp;<span>AI</span></div>
     </div>
 </div>""",
         unsafe_allow_html=True,
