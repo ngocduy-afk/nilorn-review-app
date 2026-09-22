@@ -3597,10 +3597,12 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
 
 
 def _water_loader_markup(label, uid):
-    """Shared markup for the water-ripple loading effect — imagine someone drops a stone into
-    the middle of the screen as if it were a still lake: a ring-shaped distortion (via
-    backdrop-filter + an SVG feTurbulence/feDisplacementMap, masked into a thin expanding
-    annulus with a CSS @property-animated radius) grows outward from the center, warping ONLY
+    """Shared markup for the water-ripple loading effect — imagine a stone dropped into a lake
+    just outside the top-right corner of the screen: the app itself is only the patch of that
+    lake's surface we can see, so the ripple's origin sits off-screen (past the top-right corner)
+    and the rings sweep DOWN and ACROSS into view from there. A ring-shaped distortion (via
+    backdrop-filter + an SVG feTurbulence/feDisplacementMap, masked into a thin expanding annulus
+    with a CSS @property-animated radius) grows outward from that off-screen point, warping ONLY
     the real app content it is currently passing over — completely transparent otherwise, no
     color wash at all. Two rings, slightly staggered, mimic real concentric water ripples. A
     small label pill sits fixed at the bottom to say what's happening. Used by both
@@ -3614,7 +3616,7 @@ def _water_loader_markup(label, uid):
 }}
 @keyframes nilornRippleGrow-{uid} {{
     from {{ --nilorn-r-{uid}: 0px; }}
-    to   {{ --nilorn-r-{uid}: 145vmax; }}
+    to   {{ --nilorn-r-{uid}: 175vmax; }}
 }}
 @keyframes nilornLabelPulse-{uid} {{
     0%, 100% {{ opacity: 0.55; }}
@@ -3634,13 +3636,13 @@ def _water_loader_markup(label, uid):
        page stays untouched and fully sharp, exactly like a ripple on clear water. */
     backdrop-filter: url(#nilorn-water-warp-{uid});
     -webkit-backdrop-filter: url(#nilorn-water-warp-{uid});
-    mask-image: radial-gradient(circle at 50% 42%,
+    mask-image: radial-gradient(circle at 108% -8%,
         transparent 0,
         transparent calc(var(--nilorn-r-{uid}) - 100px),
         rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
         transparent calc(var(--nilorn-r-{uid}) + 62px));
-    -webkit-mask-image: radial-gradient(circle at 50% 42%,
+    -webkit-mask-image: radial-gradient(circle at 108% -8%,
         transparent 0,
         transparent calc(var(--nilorn-r-{uid}) - 100px),
         rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
@@ -3656,8 +3658,8 @@ def _water_loader_markup(label, uid):
    content behind it doesn't have much to distort. */
 .nilorn-rim-{uid} {{
     position: fixed;
-    top: 42%;
-    left: 50%;
+    top: -8%;
+    left: 108%;
     z-index: 999996;
     pointer-events: none;
     --nilorn-r-{uid}: 0px;
