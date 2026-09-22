@@ -3247,13 +3247,13 @@ html, body, [class*="css"]  {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.62;
+    opacity: 0.72;
     background:
-        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.42), transparent 62%),
-        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.36), transparent 64%),
-        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.34), transparent 62%),
-        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.30), transparent 62%),
-        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.30), transparent 62%);
+        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.50), transparent 62%),
+        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.43), transparent 64%),
+        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.41), transparent 62%),
+        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.36), transparent 62%),
+        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.36), transparent 62%);
     background-size: 150% 150%;
     animation: nilornWaterDrift 28s ease-in-out infinite;
     filter: blur(4px);
