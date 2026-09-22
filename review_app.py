@@ -3598,12 +3598,13 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
 
 def _water_loader_markup(label, uid):
     """Shared markup for the water-wave loading effect — imagine the screen as the surface of a
-    lake: a translucent, wavy-edged band of light sweeps across the FULL page from right to left,
-    AND the actual app content underneath it visibly ripples/warps (via an animated SVG
-    feDisplacementMap filter on the app + sidebar containers) as if it were being seen through
-    moving water, not just covered by an overlay. A small label pill sits fixed at the bottom to
-    say what's happening. Used by both thinking_overlay (persistent, needs a unique uid per
-    placeholder) and show_transition_pill (one-shot, uid='once')."""
+    clear lake: a near-transparent, wavy-edged band sweeps across the FULL page from right to
+    left, and ONLY the real app content currently showing through that band is warped (via
+    backdrop-filter + an animated SVG feTurbulence/feDisplacementMap referenced from the band
+    itself) — so the ripple follows the wave's position instead of distorting the whole screen at
+    once, like water actually flowing over the interface. A small label pill sits fixed at the
+    bottom to say what's happening. Used by both thinking_overlay (persistent, needs a unique uid
+    per placeholder) and show_transition_pill (one-shot, uid='once')."""
     wave_mask = (
         "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
         "width='100' height='220'%3E%3Cpath d='M22,0 C46,28 -2,82 22,110 "
@@ -3643,19 +3644,25 @@ def _water_loader_markup(label, uid):
     left: 100%;
     width: 50vw;
     height: 130%;
+    /* Clear/transparent like real lake water — just a faint tint + highlight, not an opaque
+       purple wash. The actual "water" read comes from the content warping underneath
+       (backdrop-filter below), not from color. */
     background: linear-gradient(100deg,
         rgba(159, 148, 235, 0)    0%,
-        rgba(178, 166, 240, 0.32) 28%,
-        rgba(228, 221, 253, 0.8)  50%,
-        rgba(178, 166, 240, 0.32) 72%,
+        rgba(200, 192, 245, 0.10) 28%,
+        rgba(235, 230, 255, 0.22) 50%,
+        rgba(200, 192, 245, 0.10) 72%,
         rgba(159, 148, 235, 0)    100%);
+    /* Distort only the real app content that's currently showing through this band — so the
+       ripple only affects whatever the wave is touching right now, not the whole screen. */
+    backdrop-filter: url(#nilorn-water-warp-{uid});
+    -webkit-backdrop-filter: url(#nilorn-water-warp-{uid});
     mask-image: {wave_mask};
     -webkit-mask-image: {wave_mask};
     mask-repeat: repeat-y;
     -webkit-mask-repeat: repeat-y;
     mask-size: 100% 220px;
     -webkit-mask-size: 100% 220px;
-    filter: blur(14px);
     transform: translateX(0);
     animation:
         nilornSweepMove-{uid} 1.6s cubic-bezier(0.45, 0, 0.2, 1) forwards,
@@ -3663,7 +3670,7 @@ def _water_loader_markup(label, uid):
 }}
 .nilorn-sweep-{uid} .band.b2 {{
     width: 30vw;
-    opacity: 0.5;
+    opacity: 0.7;
     animation:
         nilornSweepMove-{uid} 1.8s cubic-bezier(0.45, 0, 0.2, 1) forwards,
         nilornMaskFlow-{uid} 0.55s linear infinite reverse;
@@ -3694,24 +3701,17 @@ def _water_loader_markup(label, uid):
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
     animation: nilornDot-{uid} 1s ease-in-out infinite;
 }}
-/* Make the actual page content ripple like a lake surface while the wave passes — not just an
-   overlay on top of it. An SVG feDisplacementMap warps the real app content using turbulence
-   noise, animated in (via SMIL <animate>) and back out over the same span as the light sweep. */
-[data-testid="stAppViewContainer"],
-[data-testid="stSidebar"] {{
-    filter: url(#nilorn-water-warp-{uid});
-}}
 </style>
+<!-- Water-refraction filter: distorts whatever is visible THROUGH the moving band (via
+     backdrop-filter on .band above), so only the content the wave is currently touching
+     ripples — not the whole screen. -->
 <svg width="0" height="0" style="position:absolute;overflow:hidden;">
-    <filter id="nilorn-water-warp-{uid}" x="-20%" y="-20%" width="140%" height="140%">
+    <filter id="nilorn-water-warp-{uid}" x="-40%" y="-20%" width="180%" height="140%">
         <feTurbulence type="fractalNoise" numOctaves="2" seed="7" result="nilorn-noise-{uid}">
-            <animate attributeName="baseFrequency" dur="1.7s" begin="0s" fill="freeze"
-                values="0.004 0.03;0.014 0.05;0.004 0.03" keyTimes="0;0.5;1" />
+            <animate attributeName="baseFrequency" dur="0.9s" begin="0s" repeatCount="indefinite"
+                values="0.006 0.035;0.016 0.05;0.006 0.035" keyTimes="0;0.5;1" />
         </feTurbulence>
-        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="0" xChannelSelector="R" yChannelSelector="G">
-            <animate attributeName="scale" dur="1.7s" begin="0s" fill="freeze"
-                values="0;13;0" keyTimes="0;0.5;1" />
-        </feDisplacementMap>
+        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="16" xChannelSelector="R" yChannelSelector="G" />
     </filter>
 </svg>
 <div class="nilorn-sweep-{uid}">
