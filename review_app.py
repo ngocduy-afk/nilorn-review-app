@@ -3597,17 +3597,27 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
 
 
 def _water_loader_markup(label, uid):
-    """Shared markup for the water-wave loading effect: a translucent, soft-edged band of light
-    that sweeps across the FULL page from right to left — like a wave of water passing over the
-    screen — instead of ripple rings radiating from a point. The band is semi-transparent so the
-    page underneath stays faintly visible through it (matching the reference video), with a small
-    label pill fixed at the bottom to say what's happening. Used by both thinking_overlay
-    (persistent, needs a unique uid per placeholder) and show_transition_pill (one-shot,
-    uid='once')."""
+    """Shared markup for the water-wave loading effect — imagine the screen as the surface of a
+    lake: a translucent, wavy-edged band of light sweeps across the FULL page from right to left,
+    AND the actual app content underneath it visibly ripples/warps (via an animated SVG
+    feDisplacementMap filter on the app + sidebar containers) as if it were being seen through
+    moving water, not just covered by an overlay. A small label pill sits fixed at the bottom to
+    say what's happening. Used by both thinking_overlay (persistent, needs a unique uid per
+    placeholder) and show_transition_pill (one-shot, uid='once')."""
+    wave_mask = (
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' "
+        "width='100' height='220'%3E%3Cpath d='M22,0 C46,28 -2,82 22,110 "
+        "C46,138 -2,192 22,220 L78,220 C54,192 98,138 78,110 "
+        "C54,82 98,28 78,0 Z' fill='white'/%3E%3C/svg%3E\")"
+    )
     return f"""<style>
 @keyframes nilornSweepMove-{uid} {{
-    0%   {{ transform: skewX(-12deg) translateX(0); }}
-    100% {{ transform: skewX(-12deg) translateX(-220vw); }}
+    0%   {{ transform: translateX(0); }}
+    100% {{ transform: translateX(-220vw); }}
+}}
+@keyframes nilornMaskFlow-{uid} {{
+    from {{ mask-position: 0 0;     -webkit-mask-position: 0 0; }}
+    to   {{ mask-position: 0 220px; -webkit-mask-position: 0 220px; }}
 }}
 @keyframes nilornWashIn-{uid} {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 @keyframes nilornLabelPulse-{uid} {{
@@ -3631,23 +3641,33 @@ def _water_loader_markup(label, uid):
     position: absolute;
     top: -15%;
     left: 100%;
-    width: 46vw;
+    width: 50vw;
     height: 130%;
     background: linear-gradient(100deg,
         rgba(159, 148, 235, 0)    0%,
-        rgba(178, 166, 240, 0.28) 28%,
-        rgba(228, 221, 253, 0.72) 50%,
-        rgba(178, 166, 240, 0.28) 72%,
+        rgba(178, 166, 240, 0.32) 28%,
+        rgba(228, 221, 253, 0.8)  50%,
+        rgba(178, 166, 240, 0.32) 72%,
         rgba(159, 148, 235, 0)    100%);
-    filter: blur(26px);
-    transform: skewX(-12deg) translateX(0);
-    animation: nilornSweepMove-{uid} 1.5s cubic-bezier(0.45, 0, 0.2, 1) forwards;
+    mask-image: {wave_mask};
+    -webkit-mask-image: {wave_mask};
+    mask-repeat: repeat-y;
+    -webkit-mask-repeat: repeat-y;
+    mask-size: 100% 220px;
+    -webkit-mask-size: 100% 220px;
+    filter: blur(14px);
+    transform: translateX(0);
+    animation:
+        nilornSweepMove-{uid} 1.6s cubic-bezier(0.45, 0, 0.2, 1) forwards,
+        nilornMaskFlow-{uid} 0.7s linear infinite;
 }}
 .nilorn-sweep-{uid} .band.b2 {{
-    width: 26vw;
-    opacity: 0.55;
-    animation-duration: 1.7s;
-    animation-delay: 0.1s;
+    width: 30vw;
+    opacity: 0.5;
+    animation:
+        nilornSweepMove-{uid} 1.8s cubic-bezier(0.45, 0, 0.2, 1) forwards,
+        nilornMaskFlow-{uid} 0.55s linear infinite reverse;
+    animation-delay: 0.12s, 0s;
 }}
 .nilorn-sweep-{uid} .label-pill {{
     position: fixed;
@@ -3674,7 +3694,26 @@ def _water_loader_markup(label, uid):
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
     animation: nilornDot-{uid} 1s ease-in-out infinite;
 }}
+/* Make the actual page content ripple like a lake surface while the wave passes — not just an
+   overlay on top of it. An SVG feDisplacementMap warps the real app content using turbulence
+   noise, animated in (via SMIL <animate>) and back out over the same span as the light sweep. */
+[data-testid="stAppViewContainer"],
+[data-testid="stSidebar"] {{
+    filter: url(#nilorn-water-warp-{uid});
+}}
 </style>
+<svg width="0" height="0" style="position:absolute;overflow:hidden;">
+    <filter id="nilorn-water-warp-{uid}" x="-20%" y="-20%" width="140%" height="140%">
+        <feTurbulence type="fractalNoise" numOctaves="2" seed="7" result="nilorn-noise-{uid}">
+            <animate attributeName="baseFrequency" dur="1.7s" begin="0s" fill="freeze"
+                values="0.004 0.03;0.014 0.05;0.004 0.03" keyTimes="0;0.5;1" />
+        </feTurbulence>
+        <feDisplacementMap in="SourceGraphic" in2="nilorn-noise-{uid}" scale="0" xChannelSelector="R" yChannelSelector="G">
+            <animate attributeName="scale" dur="1.7s" begin="0s" fill="freeze"
+                values="0;13;0" keyTimes="0;0.5;1" />
+        </feDisplacementMap>
+    </filter>
+</svg>
 <div class="nilorn-sweep-{uid}">
     <span class="band b1"></span>
     <span class="band b2"></span>
@@ -3683,7 +3722,7 @@ def _water_loader_markup(label, uid):
 
 
 @contextlib.contextmanager
-def thinking_overlay(label="Thinking...", min_visible=1.6):
+def thinking_overlay(label="Thinking...", min_visible=1.8):
     """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running calls
     (Classify & Save, Ask AI, Extract from email, ...). Shows the same water-ripple loader as
     the page-load splash — concentric rings pulsing outward from a glowing core, over a
@@ -3703,7 +3742,7 @@ def thinking_overlay(label="Thinking...", min_visible=1.6):
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading...", hold=1.6):
+def show_transition_pill(label="Loading...", hold=1.8):
     """One-shot version of thinking_overlay for the instant right before an st.rerun() call
     (Save buttons, View details, Back to Dashboard, and every other primary/green button that
     navigates or reloads). Renders the same water-ripple loader as the very last frame before
