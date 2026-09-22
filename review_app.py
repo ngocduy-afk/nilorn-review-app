@@ -3068,6 +3068,102 @@ def render_submission_detail_page(conn, submission_id):
 st.set_page_config(page_title="Factory Copilot", layout="wide")
 
 # ------------------------------------------------------------
+# Splash / page-load ripple animation — shown once per session (not replayed on
+# every widget rerun) as a full-screen overlay that fades out after ~1.9s,
+# revealing the already-rendered app underneath. Pure CSS (no JS needed), so
+# it works reliably inside st.markdown(unsafe_allow_html=True).
+# ------------------------------------------------------------
+if "nilorn_splash_shown" not in st.session_state:
+    st.session_state.nilorn_splash_shown = True
+    st.markdown(
+        """<style>
+@keyframes nilornSplashFade {
+    0%   { opacity: 1; }
+    72%  { opacity: 1; }
+    100% { opacity: 0; visibility: hidden; }
+}
+@keyframes nilornRipple {
+    0%   { transform: scale(1);   opacity: 0.65; border-width: 2.5px; }
+    100% { transform: scale(5.4); opacity: 0;    border-width: 0.5px; }
+}
+@keyframes nilornCorePulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.15); }
+}
+@keyframes nilornBrandIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+#nilorn-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at center, #f8f6fe 0%, #efeafc 55%, #e3dcf7 100%);
+    animation: nilornSplashFade 1.9s ease forwards;
+    pointer-events: none;
+}
+#nilorn-splash .splash-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 22px;
+}
+#nilorn-splash .ripple-wrap {
+    position: relative;
+    width: 140px;
+    height: 140px;
+}
+#nilorn-splash .ripple-core {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 26px; height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
+    box-shadow: 0 0 18px rgba(127, 119, 221, 0.55);
+    animation: nilornCorePulse 1.6s ease-in-out infinite;
+}
+#nilorn-splash .ripple-ring {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 26px; height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    border: 2px solid rgba(127, 119, 221, 0.55);
+    opacity: 0;
+    animation: nilornRipple 1.8s cubic-bezier(0.2, 0.6, 0.35, 1) infinite;
+}
+#nilorn-splash .ripple-ring.r2 { animation-delay: 0.45s; }
+#nilorn-splash .ripple-ring.r3 { animation-delay: 0.9s; }
+#nilorn-splash .splash-brand {
+    font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 700;
+    font-size: 21px;
+    letter-spacing: 0.09em;
+    color: #4a4470;
+    opacity: 0;
+    animation: nilornBrandIn 0.6s ease 0.35s forwards;
+}
+#nilorn-splash .splash-brand span { color: #7F77DD; }
+</style>
+<div id="nilorn-splash">
+    <div class="splash-inner">
+        <div class="ripple-wrap">
+            <div class="ripple-ring r1"></div>
+            <div class="ripple-ring r2"></div>
+            <div class="ripple-ring r3"></div>
+            <div class="ripple-core"></div>
+        </div>
+        <div class="splash-brand">NILORN&nbsp;<span>HUB</span></div>
+    </div>
+</div>""",
+        unsafe_allow_html=True,
+    )
+
+# ------------------------------------------------------------
 # Nền trang, font, và style chung — cho giao diện gọn gàng, chuyên nghiệp hơn: nền xám nhạt để
 # card nổi bật lên, font dễ đọc, nút bấm/khung viền mềm mại hơn. / Page background, font, and
 # shared styling — light gray page canvas so cards stand out, readable font, softer buttons/borders.
@@ -3094,25 +3190,66 @@ h1, h2, h3, h4, h5, h6 {
     letter-spacing: -0.01em;
 }
 .stButton > button {
+    position: relative;
+    overflow: hidden;
     border-radius: 999px;
     font-weight: 700;
     font-size: 15px;
     padding: 10px 26px;
-    border: none;
-    background: #efedf9;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    background: linear-gradient(145deg, #f6f4fe 0%, #efedf9 45%, #ddd5f6 100%);
+    background-size: 100% 220%;
+    background-position: top;
     color: #2c2c2a;
-    box-shadow: 0 3px 0 rgba(20, 20, 30, 0.12);
-    transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease;
+    box-shadow:
+        0 3px 0 rgba(20, 20, 30, 0.12),
+        0 6px 12px rgba(127, 119, 221, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.8),
+        inset 0 -2px 4px rgba(20, 20, 30, 0.05);
+    transition: transform 0.1s ease, box-shadow 0.1s ease, background-position 0.35s ease;
+}
+/* glass sheen — top-half highlight (applies to all buttons; overridden by the
+   [kind="primary"] rule below for primary buttons, which is more specific) */
+.stButton > button::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 52%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.05) 100%);
+    border-radius: 999px 999px 0 0;
+    pointer-events: none;
+}
+/* glass sheen — diagonal light streak that sweeps across on hover */
+.stButton > button::after {
+    content: "";
+    position: absolute;
+    top: -60%; left: -25%;
+    width: 35%; height: 220%;
+    background: rgba(255, 255, 255, 0.5);
+    transform: rotate(20deg);
+    transition: left 0.55s ease;
+    pointer-events: none;
+}
+.stButton > button:hover::after {
+    left: 130%;
 }
 .stButton > button:hover {
-    background: #e3dff5;
+    background-position: bottom;
     color: #2c2c2a;
-    transform: translateY(1px);
-    box-shadow: 0 2px 0 rgba(20, 20, 30, 0.12);
+    transform: translateY(1px) scale(1.012);
+    box-shadow:
+        0 2px 0 rgba(20, 20, 30, 0.12),
+        0 8px 16px rgba(127, 119, 221, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        inset 0 -2px 4px rgba(20, 20, 30, 0.06);
 }
 .stButton > button:active {
-    transform: translateY(3px);
-    box-shadow: 0 0 0 rgba(20, 20, 30, 0.12);
+    transform: translateY(3px) scale(0.99);
+    box-shadow:
+        0 0 0 rgba(20, 20, 30, 0.12),
+        0 2px 6px rgba(127, 119, 221, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.5),
+        inset 0 2px 5px rgba(20, 20, 30, 0.1);
 }
 .stButton > button[kind="primary"],
 .stFormSubmitButton > button {
@@ -3752,10 +3889,17 @@ st.markdown(
     section[data-testid="stSidebar"] { background-color: #1a1a3e; }
     section[data-testid="stSidebar"] * { color: #ffffff !important; }
     section[data-testid="stSidebar"] .stButton button {
-        background: transparent; border: none; text-align: left; padding: 8px 10px;
-        border-radius: 8px; width: 100%; font-size: 14px;
+        background: transparent !important; border: none; text-align: left; padding: 8px 10px;
+        border-radius: 8px; width: 100%; font-size: 14px; box-shadow: none !important;
+        transform: none !important;
     }
-    section[data-testid="stSidebar"] .stButton button:hover { background: rgba(255,255,255,0.10); }
+    section[data-testid="stSidebar"] .stButton button:hover {
+        background: rgba(255,255,255,0.10) !important; transform: none !important;
+    }
+    section[data-testid="stSidebar"] .stButton button::before,
+    section[data-testid="stSidebar"] .stButton button::after {
+        content: none !important;
+    }
     </style>""",
     unsafe_allow_html=True,
 )
