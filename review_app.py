@@ -3114,37 +3114,70 @@ h1, h2, h3, h4, h5, h6 {
     transform: translateY(3px);
     box-shadow: 0 0 0 rgba(20, 20, 30, 0.12);
 }
-.stButton > button[kind="primary"] {
-    background: #3ba24f;
-    color: #ffffff;
-    box-shadow: 0 4px 0 #297a38;
-}
-.stButton > button[kind="primary"]:hover {
-    background: #359147;
-    color: #ffffff;
-    box-shadow: 0 3px 0 #297a38;
-}
-.stButton > button[kind="primary"]:active {
-    box-shadow: 0 0 0 #297a38;
-}
+.stButton > button[kind="primary"],
 .stFormSubmitButton > button {
+    position: relative;
+    overflow: hidden;
     border-radius: 999px !important;
     font-weight: 700 !important;
     padding: 10px 26px !important;
-    background: #3ba24f !important;
+    border: 1px solid rgba(255, 255, 255, 0.35) !important;
+    background: linear-gradient(145deg, #52c96a 0%, #3ba24f 45%, #2f8f42 100%) !important;
+    background-size: 100% 220%;
+    background-position: top;
     color: #ffffff !important;
-    border: none !important;
-    box-shadow: 0 4px 0 #297a38 !important;
-    transition: transform 0.08s ease, box-shadow 0.08s ease !important;
+    box-shadow:
+        0 4px 0 #297a38,
+        0 8px 16px rgba(59, 162, 79, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.55),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.08) !important;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background-position 0.35s ease !important;
 }
+/* glass sheen — top-half highlight */
+.stButton > button[kind="primary"]::before,
+.stFormSubmitButton > button::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 52%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.45) 0%, rgba(255,255,255,0.04) 100%);
+    border-radius: 999px 999px 0 0;
+    pointer-events: none;
+}
+/* glass sheen — diagonal light streak that sweeps across on hover */
+.stButton > button[kind="primary"]::after,
+.stFormSubmitButton > button::after {
+    content: "";
+    position: absolute;
+    top: -60%; left: -25%;
+    width: 35%; height: 220%;
+    background: rgba(255, 255, 255, 0.28);
+    transform: rotate(20deg);
+    transition: left 0.55s ease;
+    pointer-events: none;
+}
+.stButton > button[kind="primary"]:hover::after,
+.stFormSubmitButton > button:hover::after {
+    left: 130%;
+}
+.stButton > button[kind="primary"]:hover,
 .stFormSubmitButton > button:hover {
-    background: #359147 !important;
-    transform: translateY(1px);
-    box-shadow: 0 3px 0 #297a38 !important;
+    background-position: bottom !important;
+    transform: translateY(1px) scale(1.012);
+    box-shadow:
+        0 3px 0 #297a38,
+        0 10px 22px rgba(59, 162, 79, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.6),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.08) !important;
 }
+.stButton > button[kind="primary"]:active,
 .stFormSubmitButton > button:active {
-    transform: translateY(4px);
-    box-shadow: 0 0 0 #297a38 !important;
+    transform: translateY(4px) scale(0.99);
+    box-shadow:
+        0 0 0 #297a38,
+        0 2px 6px rgba(59, 162, 79, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.3),
+        inset 0 2px 5px rgba(0, 0, 0, 0.18) !important;
 }
 [data-testid="stTabs"] {
     background: #ffffff;
