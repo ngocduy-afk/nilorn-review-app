@@ -4022,6 +4022,21 @@ def clean_card(accent=None):
     return st.container(key=key)
 
 
+# ------------------------------------------------------------
+# Water-ripple reveal for the page we just navigated/saved to. show_transition_pill() (called
+# right before every st.rerun() that saves/navigates) only stashes a label here instead of
+# rendering — so the click itself is instant, with no artificial delay. The ripple then plays
+# HERE, on the NEW page, right alongside the rest of this page's own content — i.e. in parallel
+# with the transition rather than as a wait before it. MUST run before the detail-page dispatch
+# below (which calls st.stop() for "View details" / complaint-detail pages) — otherwise a
+# st.stop() on that path skips this block entirely and the ripple never shows, which is exactly
+# what was happening before this was moved here.
+# ------------------------------------------------------------
+if st.session_state.get("_nilorn_pending_ripple"):
+    _nilorn_ripple_label = st.session_state.pop("_nilorn_pending_ripple")
+    st.markdown(_water_loader_markup(_nilorn_ripple_label, "nav"), unsafe_allow_html=True)
+
+
 try:
     conn = ensure_connection()
 except Exception as e:
@@ -4080,17 +4095,6 @@ st.markdown(
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "dashboard"
-
-# ------------------------------------------------------------
-# Water-ripple reveal for the page we just navigated/saved to. show_transition_pill() (called
-# right before every st.rerun() that saves/navigates) only stashes a label here instead of
-# rendering — so the click itself is instant, with no artificial delay. The ripple then plays
-# HERE, on the NEW page, right alongside the rest of this page's own content — i.e. in parallel
-# with the transition rather than as a wait before it.
-# ------------------------------------------------------------
-if st.session_state.get("_nilorn_pending_ripple"):
-    _nilorn_ripple_label = st.session_state.pop("_nilorn_pending_ripple")
-    st.markdown(_water_loader_markup(_nilorn_ripple_label, "nav"), unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 🏭 Nilorn Internal AI")
