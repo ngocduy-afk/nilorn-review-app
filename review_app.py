@@ -3751,15 +3751,14 @@ def thinking_overlay(label="Thinking...", min_visible=2.2):
         placeholder.empty()
 
 
-def show_transition_pill(label="Loading...", hold=2.2):
-    """One-shot version of thinking_overlay for the instant right before an st.rerun() call
-    (Save buttons, View details, Back to Dashboard, and every other primary/green button that
-    navigates or reloads). Renders the same water-ripple loader as the very last frame before
-    Streamlit tears the script down and reruns it, then holds for `hold` seconds so the ripple
-    is clearly visible before the page transitions — a bare markdown call would otherwise be
-    replaced by the rerun almost immediately, flashing by too fast to read as "water"."""
-    st.markdown(_water_loader_markup(label, "once"), unsafe_allow_html=True)
-    time.sleep(hold)
+def show_transition_pill(label="Loading..."):
+    """Called right before an st.rerun() that saves/navigates (Save buttons, View details, Back
+    to Dashboard, and every other primary/green button that reloads). Does NOT render or block —
+    it just stashes `label` in session_state so the ripple plays on the NEW page right after the
+    rerun instead of delaying the old one. That way the click itself feels instant, and the
+    water-ripple reveal runs in parallel with the page transition rather than before it (see the
+    "_nilorn_pending_ripple" check near the top of the script, right before `with st.sidebar:`)."""
+    st.session_state["_nilorn_pending_ripple"] = label
 
 
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
@@ -4081,6 +4080,17 @@ st.markdown(
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = "dashboard"
+
+# ------------------------------------------------------------
+# Water-ripple reveal for the page we just navigated/saved to. show_transition_pill() (called
+# right before every st.rerun() that saves/navigates) only stashes a label here instead of
+# rendering — so the click itself is instant, with no artificial delay. The ripple then plays
+# HERE, on the NEW page, right alongside the rest of this page's own content — i.e. in parallel
+# with the transition rather than as a wait before it.
+# ------------------------------------------------------------
+if st.session_state.get("_nilorn_pending_ripple"):
+    _nilorn_ripple_label = st.session_state.pop("_nilorn_pending_ripple")
+    st.markdown(_water_loader_markup(_nilorn_ripple_label, "nav"), unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 🏭 Nilorn Internal AI")
