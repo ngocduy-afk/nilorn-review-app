@@ -3181,43 +3181,13 @@ html, body, [class*="css"]  {
 }
 .stApp {
     background: linear-gradient(160deg, #f3f0fb 0%, #f7f8fc 55%);
-    position: relative;
-}
-[data-testid="stAppViewContainer"] {
-    position: relative;
-    z-index: 1;
-}
-.stApp::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    opacity: 0.9;
-    background:
-        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.55), transparent 62%),
-        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.48), transparent 64%),
-        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.46), transparent 62%),
-        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.40), transparent 62%),
-        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.40), transparent 62%);
-    background-size: 150% 150%;
-    animation: nilornWaterDrift 28s ease-in-out infinite;
-    filter: blur(3px);
-}
-@keyframes nilornWaterDrift {
-    0%   { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
-    50%  { background-position: 40% 45%, 60% 50%, 35% 60%, 30% 65%, 65% 55%; }
-    100% { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
-}
-@media (prefers-reduced-motion: reduce) {
-    .stApp::before { animation: none !important; }
 }
 [data-testid="stHeader"] {
     background: transparent;
 }
 [data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 18px !important;
-    box-shadow: 0 1px 3px rgba(20, 20, 30, 0.05);
+    box-shadow: 0 4px 16px rgba(40, 30, 80, 0.12);
 }
 h1, h2, h3, h4, h5, h6 {
     font-weight: 700 !important;
@@ -3230,14 +3200,14 @@ h1, h2, h3, h4, h5, h6 {
     font-weight: 700;
     font-size: 15px;
     padding: 10px 26px;
-    border: 1px solid rgba(255, 255, 255, 0.6);
+    border: 1.5px solid rgba(255, 255, 255, 0.9);
     background: linear-gradient(145deg, #f6f4fe 0%, #efedf9 45%, #ddd5f6 100%);
     background-size: 100% 220%;
     background-position: top;
     color: #2c2c2a;
     box-shadow:
         0 3px 0 rgba(20, 20, 30, 0.12),
-        0 6px 12px rgba(127, 119, 221, 0.18),
+        0 10px 20px rgba(58, 42, 120, 0.28),
         inset 0 1px 0 rgba(255, 255, 255, 0.8),
         inset 0 -2px 4px rgba(20, 20, 30, 0.05);
     transition: transform 0.1s ease, box-shadow 0.1s ease, background-position 0.35s ease;
@@ -3552,7 +3522,7 @@ SECTION_COLOR_STYLE = {
     "amber": ("#faeeda", "#854f0b"),
     "teal": ("#e1f5ee", "#085041"),
     "coral": ("#faece7", "#993c1d"),
-    "gray": ("#f0edfa", "#2c2c2a"),
+    "gray": ("#ffffff", "#2c2c2a"),
 }
 
 DASHBOARD_BADGE_STYLE = {
@@ -3581,7 +3551,8 @@ def section_header(icon, title, color="gray"):
 def stat_card_html(label, value, color="gray"):
     bg, text = SECTION_COLOR_STYLE.get(color, SECTION_COLOR_STYLE["gray"])
     return (
-        f'<div style="background:{bg};border-radius:18px;padding:0.9rem 1rem;">'
+        f'<div style="background:{bg};border-radius:18px;padding:0.9rem 1rem;'
+        f'box-shadow:0 2px 10px rgba(40, 30, 80, 0.10);border:1px solid rgba(255,255,255,0.7);">'
         f'<p style="font-size:12px;color:{text};opacity:0.75;margin:0 0 4px;font-weight:500;">{label}</p>'
         f'<p style="font-size:26px;font-weight:700;margin:0;color:{text};">{value}</p>'
         f'</div>'
@@ -5646,6 +5617,7 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 div[class*="st-key-dashboard_period_row"] {{
     display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
     background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e1defa;
+    box-shadow: 0 2px 10px rgba(40, 30, 80, 0.12);
 }}
 div[class*="st-key-dashboard_period_row"] div[data-testid="stButton"] {{ width: auto; }}
 div[class*="st-key-dashboard_period_row"] button {{
@@ -5790,46 +5762,61 @@ div[class*="st-key-dashboard_period_pill_{_period}"] button {{
                 unsafe_allow_html=True,
             )
 
+        # Nền trang giờ là gradient tím động khá rực — chart Chart.js và list top-5 trước đây
+        # render thẳng lên nền trang (không card bao ngoài) nên bị chìm/mờ nhạt khi nền đậm hơn.
+        # Bọc cả 2 trong thẻ trắng có bóng đổ để tách bạch rõ khỏi nền động phía sau.
+        st.markdown(
+            """<style>
+div[class*="st-key-dashboard_chart_card"],
+div[class*="st-key-dashboard_top5_card"] {
+    background: #ffffff; border-radius: 18px; padding: 1.1rem 1.2rem 1.3rem;
+    box-shadow: 0 2px 14px rgba(40, 30, 80, 0.10); border: 1px solid rgba(255, 255, 255, 0.7);
+}
+</style>""",
+            unsafe_allow_html=True,
+        )
         chart_col, top5_col = st.columns([1.4, 1])
         with chart_col:
-            section_header("📈", "Complaints over time (last 6 months)", "blue")
-            month_labels = []
-            month_counts = []
-            for i in range(5, -1, -1):
-                m = _today_for_label.month - i
-                y = _today_for_label.year
-                while m <= 0:
-                    m += 12
-                    y -= 1
-                label = f"{m:02d}/{y}"
-                month_labels.append(label)
-                count = sum(
-                    1 for r in rows_db
-                    if r[idx["record_date"]] and r[idx["record_date"]].year == y and r[idx["record_date"]].month == m
-                )
-                month_counts.append(count)
-            render_gradient_bar_chart(month_labels, month_counts, value_suffix="complaint(s)", chart_key="dashboard_trend")
+            with st.container(key="dashboard_chart_card"):
+                section_header("📈", "Complaints over time (last 6 months)", "blue")
+                month_labels = []
+                month_counts = []
+                for i in range(5, -1, -1):
+                    m = _today_for_label.month - i
+                    y = _today_for_label.year
+                    while m <= 0:
+                        m += 12
+                        y -= 1
+                    label = f"{m:02d}/{y}"
+                    month_labels.append(label)
+                    count = sum(
+                        1 for r in rows_db
+                        if r[idx["record_date"]] and r[idx["record_date"]].year == y and r[idx["record_date"]].month == m
+                    )
+                    month_counts.append(count)
+                render_gradient_bar_chart(month_labels, month_counts, value_suffix="complaint(s)", chart_key="dashboard_trend")
 
         with top5_col:
-            section_header("🏆", "Suppliers with the Most Complaints", "amber")
-            supplier_counter = Counter()
-            for r in period_rows:
-                name = r[idx["vendor_name_matched"]] or r[idx["supplier_name_raw"]]
-                supplier_counter[name] += 1
-            top5 = supplier_counter.most_common(5)
-            if not top5:
-                st.caption("No data in this time period.")
-            else:
-                for rank, (name, count) in enumerate(top5, start=1):
-                    badge_color = "coral" if rank == 1 else ("amber" if rank <= 3 else "teal")
-                    st.markdown(
-                        f'<div style="display:flex;justify-content:space-between;align-items:center;'
-                        f'padding:6px 0;">'
-                        f'<span style="font-size:13px;">{rank}. {name}</span>'
-                        f'{render_badge(str(count), *DASHBOARD_BADGE_STYLE.get(badge_color, DASHBOARD_BADGE_STYLE["gray"]))}'
-                        f'</div>',
-                        unsafe_allow_html=True,
-                    )
+            with st.container(key="dashboard_top5_card"):
+                section_header("🏆", "Suppliers with the Most Complaints", "amber")
+                supplier_counter = Counter()
+                for r in period_rows:
+                    name = r[idx["vendor_name_matched"]] or r[idx["supplier_name_raw"]]
+                    supplier_counter[name] += 1
+                top5 = supplier_counter.most_common(5)
+                if not top5:
+                    st.caption("No data in this time period.")
+                else:
+                    for rank, (name, count) in enumerate(top5, start=1):
+                        badge_color = "coral" if rank == 1 else ("amber" if rank <= 3 else "teal")
+                        st.markdown(
+                            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+                            f'padding:6px 0;">'
+                            f'<span style="font-size:13px;">{rank}. {name}</span>'
+                            f'{render_badge(str(count), *DASHBOARD_BADGE_STYLE.get(badge_color, DASHBOARD_BADGE_STYLE["gray"]))}'
+                            f'</div>',
+                            unsafe_allow_html=True,
+                        )
 
         st.markdown("---")
         section_header("📥", "Recent complaints — click to view details", "gray")
@@ -5865,6 +5852,7 @@ div[class*="st-key-dashboard_period_pill_{_period}"] button {{
 div[class*="st-key-dashboard_filter_row"] {{
     display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
     background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e1defa;
+    box-shadow: 0 2px 10px rgba(40, 30, 80, 0.12);
 }}
 div[class*="st-key-dashboard_filter_row"] div[data-testid="stButton"] {{ width: auto; }}
 div[class*="st-key-dashboard_filter_row"] button {{
