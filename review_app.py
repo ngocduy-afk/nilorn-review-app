@@ -15,6 +15,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import base64
 import os
+import contextlib
 
 # Logo Nilorn (nhung san base64, khong can file rieng trong repo) — dung lam header cho moi
 # bao cao Word/PDF tai xuong. Anh da duoc resize nho (500px ngang) de giu code gon nhe.
@@ -1795,7 +1796,7 @@ def apply_complaint_prefill_fields(fields):
 
 def render_create_complaint_suggestion(conn, question, button_key):
     if st.button("📝 Create New Complaint with this description", key=button_key, type="primary"):
-        with st.spinner("AI is preparing the description..."):
+        with thinking_overlay("AI is preparing the description..."):
             ai_client = get_ai_client()
             (product_names, customer_names, supplier_names,
              staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
@@ -3017,7 +3018,7 @@ def render_submission_detail_page(conn, submission_id):
             else:
                 try:
                     import json as _json
-                    with st.spinner("Uploading..."):
+                    with thinking_overlay("Uploading..."):
                         final_image_urls = sub.get("defect_image_urls") or []
                         if new_images:
                             final_image_urls = []
@@ -3586,6 +3587,75 @@ def render_zoomable_image(image_bytes_or_b64, width=220, caption="", media_type=
         """,
         unsafe_allow_html=True,
     )
+
+
+@contextlib.contextmanager
+def thinking_overlay(label="Thinking..."):
+    """Custom AI 'processing' overlay used in place of st.spinner around AI/long-running
+    calls (Classify & Save, Ask AI, Extract from email, ...). Mirrors the reference
+    reveal-interaction: the background gently dims + blurs, and a dark rounded pill with a
+    small pulsing dot sits fixed near the bottom of the screen while work happens, then both
+    disappear the moment the block finishes (the fresh content is already rendered underneath,
+    so it reads as a "reveal" rather than a hard cut)."""
+    placeholder = st.empty()
+    placeholder.markdown(
+        f"""<style>
+@keyframes nilornDimIn {{
+    from {{ opacity: 0; }}
+    to   {{ opacity: 1; }}
+}}
+@keyframes nilornThinkIn {{
+    from {{ opacity: 0; transform: translate(-50%, 12px) scale(0.96); }}
+    to   {{ opacity: 1; transform: translate(-50%, 0) scale(1); }}
+}}
+@keyframes nilornThinkDot {{
+    0%, 100% {{ transform: scale(1);    opacity: 1;    }}
+    50%      {{ transform: scale(0.55); opacity: 0.55; }}
+}}
+#nilorn-dim-{id(placeholder)} {{
+    position: fixed;
+    inset: 0;
+    z-index: 999997;
+    background: rgba(243, 240, 251, 0.38);
+    backdrop-filter: blur(2.5px);
+    -webkit-backdrop-filter: blur(2.5px);
+    animation: nilornDimIn 0.3s ease forwards;
+    pointer-events: none;
+}}
+#nilorn-think-pill-{id(placeholder)} {{
+    position: fixed;
+    left: 50%;
+    bottom: 34px;
+    z-index: 999998;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #1c1c22;
+    color: rgba(255, 255, 255, 0.78);
+    font-family: 'Fredoka', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-weight: 600;
+    font-size: 14.5px;
+    padding: 11px 20px 11px 15px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    animation: nilornThinkIn 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}}
+#nilorn-think-pill-{id(placeholder)} .dot {{
+    width: 9px; height: 9px; border-radius: 50%;
+    background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
+    box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
+    animation: nilornThinkDot 1s ease-in-out infinite;
+}}
+</style>
+<div id="nilorn-dim-{id(placeholder)}"></div>
+<div id="nilorn-think-pill-{id(placeholder)}"><span class="dot"></span>{label}</div>""",
+        unsafe_allow_html=True,
+    )
+    try:
+        yield
+    finally:
+        placeholder.empty()
 
 
 def render_gradient_bar_chart(labels, values, value_suffix="", height=290, chart_key="chart"):
@@ -4423,7 +4493,7 @@ if page == "ask_ai":
 
     if st.button("Ask AI", type="primary") and question.strip():
         ai_client = get_ai_client()
-        with st.spinner("AI is looking this up..."):
+        with thinking_overlay("AI is looking this up..."):
             try:
                 conn = ensure_connection()
                 taxonomy_context = fetch_taxonomy_context(conn)
@@ -4686,7 +4756,7 @@ if page == "new_complaint":
                 if not email_text_input.strip() and not email_image_input:
                     st.warning("You haven't pasted any content or uploaded an image.")
                 else:
-                    with st.spinner("AI is reading the email..."):
+                    with thinking_overlay("AI is reading the email..."):
                         ai_client = get_ai_client()
                         (product_names, customer_names, supplier_names,
                          staff_labels, rc_list, capa_list) = fetch_intake_lookup_lists(conn)
@@ -5044,7 +5114,7 @@ if page == "new_complaint":
             if defect_photo_input is not None:
                 defect_photo_b64 = base64.b64encode(defect_photo_input.getvalue()).decode("utf-8")
 
-            with st.spinner("Saving and classifying..."):
+            with thinking_overlay("Saving and classifying..."):
                 with conn.cursor() as cur:
                     cur.execute(
                         """insert into complaint
