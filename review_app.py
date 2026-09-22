@@ -3181,6 +3181,36 @@ html, body, [class*="css"]  {
 }
 .stApp {
     background: linear-gradient(160deg, #f3f0fb 0%, #f7f8fc 55%);
+    position: relative;
+}
+[data-testid="stAppViewContainer"] {
+    position: relative;
+    z-index: 1;
+}
+.stApp::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.6;
+    background:
+        radial-gradient(ellipse 55% 45% at 18% 22%, rgba(148, 130, 232, 0.38), transparent 60%),
+        radial-gradient(ellipse 50% 50% at 82% 28%, rgba(168, 152, 238, 0.33), transparent 62%),
+        radial-gradient(ellipse 60% 55% at 50% 85%, rgba(190, 178, 244, 0.30), transparent 60%),
+        radial-gradient(ellipse 45% 40% at 8% 92%, rgba(205, 196, 247, 0.26), transparent 60%),
+        radial-gradient(ellipse 40% 40% at 95% 90%, rgba(127, 119, 221, 0.24), transparent 60%);
+    background-size: 160% 160%;
+    animation: nilornWaterDrift 28s ease-in-out infinite;
+    filter: blur(6px);
+}
+@keyframes nilornWaterDrift {
+    0%   { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
+    50%  { background-position: 40% 45%, 60% 50%, 35% 60%, 30% 65%, 65% 55%; }
+    100% { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .stApp::before { animation: none !important; }
 }
 [data-testid="stHeader"] {
     background: transparent;
