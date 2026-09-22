@@ -4035,7 +4035,16 @@ def clean_card(accent=None):
 # ------------------------------------------------------------
 if st.session_state.get("_nilorn_pending_ripple"):
     _nilorn_ripple_label = st.session_state.pop("_nilorn_pending_ripple")
-    st.markdown(_water_loader_markup(_nilorn_ripple_label, "nav"), unsafe_allow_html=True)
+    # uid MUST be unique per rerun (not a fixed "nav") — the label text is almost always the same
+    # ("Loading..."), so with a fixed uid the generated HTML string is byte-identical across
+    # navigations. Streamlit/React only touches the DOM when the markdown content actually changes,
+    # so an identical string never gets re-inserted and the CSS animation — already frozen at its
+    # faded, invisible end state from the very first time it played — never restarts. That's why the
+    # ripple appeared once and then silently stopped showing on every later tab switch.
+    st.markdown(
+        _water_loader_markup(_nilorn_ripple_label, f"nav{uuid.uuid4().hex[:8]}"),
+        unsafe_allow_html=True,
+    )
 
 
 try:
