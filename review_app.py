@@ -5600,8 +5600,15 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 
     period_col, picker_col, filler_col, dl_col = st.columns([1.3, 1.6, 1.9, 1.3])
     with period_col:
+        # Same remount issue as the status filter below: this radio isn't rendered while on a
+        # "View details" page, so returning from one recreates it from scratch. Its RETURN value
+        # restores fine from session_state, but the pill shown as active can silently revert to the
+        # first option ("Month") on that first remounted render unless we pin `index=` explicitly.
+        _period_opts = ["Month", "Quarter", "Year"]
+        _stored_period = st.session_state.get("dashboard_period")
+        _period_default_index = _period_opts.index(_stored_period) if _stored_period in _period_opts else 0
         period = st.radio(
-            "Time Period", ["Month", "Quarter", "Year"],
+            "Time Period", _period_opts, index=_period_default_index,
             horizontal=True, key="dashboard_period", label_visibility="collapsed",
         )
 
@@ -5645,10 +5652,17 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
     period_options.sort(key=lambda x: x[1], reverse=True)
 
     with picker_col:
+        _picker_key = f"period_picker_{period}"
+        _stored_picked_idx = st.session_state.get(_picker_key)
+        _picker_default_index = (
+            _stored_picked_idx if isinstance(_stored_picked_idx, int) and 0 <= _stored_picked_idx < len(period_options)
+            else 0
+        )
         picked_idx = st.selectbox(
             "Select Period", list(range(len(period_options))),
+            index=_picker_default_index,
             format_func=lambda i: period_options[i][0],
-            key=f"period_picker_{period}", label_visibility="collapsed",
+            key=_picker_key, label_visibility="collapsed",
         )
     picked_label, period_start, period_end_selected = period_options[picked_idx]
     period_end = min(period_end_selected, _today_for_label)
@@ -5765,28 +5779,55 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
         n_missing = sum(1 for r in period_rows if _compute_missing_tags(r))
         n_closed = len(period_rows) - n_missing
 
-        # Options are fixed keys ("not_closed"/"closed"/"all") with a STATIC label ("Not Closed",
-        # no number). Verified with a Playwright test against a standalone Streamlit repro: when the
-        # label text embeds a live count (e.g. "Not Closed (7)") and that count changes between
-        # reruns (switching Month/Quarter/Year, a complaint getting closed, ...) while the SELECTED
-        # option stays the same, Streamlit/react-aria fails to re-sync the option's actual `checked`
-        # DOM property on that render — the pill silently shows as unselected (or defaults to the
-        # first option) even though st.radio()'s Python return value is still correct and the cards
-        # below are filtered correctly. This is a frontend rendering limitation, not something a CSS
-        # selector can work around. Fix: keep the option text 100% static across every render, and
-        # show the live counts separately (as a caption below the pills) instead of inside them.
-        _filter_labels = {"not_closed": "Not Closed", "closed": "Closed", "all": "All"}
-        _filter_keys = list(_filter_labels.keys())
-        _stored_filter = st.session_state.get("dashboard_card_filter")
-        _filter_default_index = _filter_keys.index(_stored_filter) if _stored_filter in _filter_keys else 0
-        filter_pick = st.radio(
-            "Filter by status",
-            _filter_keys,
-            index=_filter_default_index,
-            format_func=lambda k: _filter_labels[k],
-            horizontal=True, key="dashboard_card_filter", label_visibility="collapsed",
+        # Rendered as 3 plain st.button()s styled as a pill row — NOT st.radio — with counts back
+        # inline in the label. st.radio was tried first, but a Playwright test against a standalone
+        # Streamlit repro proved a real frontend bug: when a radio option's label text embeds a live
+        # count and that count changes between reruns (switching Month/Quarter/Year, a complaint
+        # closing, ...) while the SELECTED option stays the same, Streamlit/react-aria fails to
+        # re-sync the option's actual `checked` DOM state on that render, so the pill can show
+        # nothing (or the wrong thing) highlighted even though the Python return value — and the
+        # cards below — are still correct. Buttons don't have that "checked" concept at all: each
+        # click just returns True for one rerun, and which pill LOOKS active is decided by CSS text
+        # generated fresh from Python every render (embedding the current key literally), so there's
+        # no browser-side state to fall out of sync in the first place. Verified with the same
+        # Playwright harness: the active pill's own count can change while it stays active, or the
+        # period can change out from under it, and the highlight always tracks correctly.
+        _filter_defs = [
+            ("not_closed", f"Not Closed ({n_missing})"),
+            ("closed", f"Closed ({n_closed})"),
+            ("all", f"All ({len(period_rows)})"),
+        ]
+        _filter_keys = [k for k, _ in _filter_defs]
+        _current_filter = st.session_state.get("dashboard_card_filter")
+        if _current_filter not in _filter_keys:
+            _current_filter = "not_closed"
+
+        st.markdown(
+            f"""<style>
+div[class*="st-key-dashboard_filter_row"] {{ display: flex; flex-direction: row; gap: 6px; }}
+div[class*="st-key-dashboard_filter_row"] div[data-testid="stButton"] {{ width: auto; }}
+div[class*="st-key-dashboard_filter_row"] button {{
+    background: #ffffff !important; color: #4a4a45 !important; border: 1px solid #e5e3da !important;
+    border-radius: 20px !important; padding: 5px 16px !important; font-size: 13px !important;
+    font-weight: 400 !important; box-shadow: none !important; transform: none !important;
+    white-space: nowrap;
+}}
+div[class*="st-key-dashboard_filter_row"] button:hover {{ background: #f5f4ef !important; }}
+div[class*="st-key-dashboard_filter_pill_{_current_filter}"] button {{
+    background: #7F77DD !important; color: #ffffff !important; font-weight: 600 !important;
+    border-color: #7F77DD !important;
+}}
+</style>""",
+            unsafe_allow_html=True,
         )
-        st.caption(f"Not Closed ({n_missing}) · Closed ({n_closed}) · All ({len(period_rows)})")
+
+        with st.container(key="dashboard_filter_row"):
+            for _fkey, _flabel in _filter_defs:
+                if st.button(_flabel, key=f"dashboard_filter_pill_{_fkey}"):
+                    st.session_state["dashboard_card_filter"] = _fkey
+                    st.rerun()
+
+        filter_pick = _current_filter
 
         if filter_pick == "not_closed":
             filtered_card_rows = [r for r in period_rows if _compute_missing_tags(r)]
