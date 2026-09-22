@@ -3193,13 +3193,13 @@ html, body, [class*="css"]  {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.7;
+    opacity: 0.55;
     background:
-        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.44), transparent 62%),
-        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.38), transparent 64%),
-        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.36), transparent 62%),
-        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.32), transparent 62%),
-        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.32), transparent 62%);
+        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.36), transparent 62%),
+        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.31), transparent 64%),
+        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.29), transparent 62%),
+        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.26), transparent 62%),
+        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.26), transparent 62%);
     background-size: 150% 150%;
     animation: nilornWaterDrift 28s ease-in-out infinite;
     filter: blur(4px);
@@ -3682,14 +3682,13 @@ def _water_loader_markup(label, uid):
         rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
         transparent calc(var(--nilorn-r-{uid}) + 62px));
-    /* Capped at 8 loops (~17.6s), NOT infinite — this markup is a one-shot st.markdown() call, not
-       a placeholder someone clears when loading finishes, so there is no signal that tells the
-       browser "the real page is ready, stop now" other than the NEXT rerun overwriting/dropping
-       this element entirely. If the person doesn't trigger another rerun right away (they just sit
-       on the freshly-loaded page), an `infinite` animation here would keep sweeping forever with
-       nothing to stop it. 8 loops comfortably covers a slow network/DB wait while still guaranteeing
-       it settles into its invisible end state (fill: forwards) on its own after that. */
-    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) 8 forwards;
+    /* Single short sweep, NOT looped — Streamlit streams the real page content in right behind
+       this markup as the script keeps running (usually well under 2s), so the ripple only needs
+       to bridge that brief gap. Looping it for longer (tried once) backfired: the UI is normally
+       fully visible long before the loop count runs out, so the ripple kept sweeping over an
+       already-finished page and just looked like a glitch. Any slower background work (a chart's
+       own network fetch, etc.) happens independently and shouldn't hold this up. */
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
 }}
 .nilorn-ripple-{uid}.r2 {{
     animation-delay: 0.3s;
@@ -3714,8 +3713,8 @@ def _water_loader_markup(label, uid):
         0 0 22px 4px rgba(255, 255, 255, 0.35),
         inset 0 0 26px rgba(127, 119, 221, 0.28);
     opacity: 0.85;
-    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) 8 forwards,
-               nilornRimFade-{uid} 2.2s ease 8 forwards;
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards,
+               nilornRimFade-{uid} 2.2s ease forwards;
 }}
 .nilorn-rim-{uid}.r2 {{
     animation-delay: 0.3s, 0.3s;
@@ -3743,19 +3742,17 @@ def _water_loader_markup(label, uid):
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    /* Loops 6x (~16.8s) instead of a single pulse, so a slow network/DB call doesn't leave the pill
-       faded out and static while the page is still loading — but NOT infinite (see the ripple-ring
-       comment above: this element has no "loading is done, stop now" signal of its own, only the
-       next rerun replacing it outright). After 6 loops it settles into its faded-out end state on
-       its own. 0%/100% are both opacity 0, so every loop restarts seamlessly with no flicker. */
-    animation: nilornLabelPulse-{uid} 2.8s ease 6 forwards;
+    /* Single pulse, then fades out and stays gone — the real UI is normally already on screen well
+       before this finishes, so a longer/looping pill just lingers over a finished page instead of
+       actually covering more loading time (see the ripple-ring comment above). */
+    animation: nilornLabelPulse-{uid} 2.8s ease forwards;
     pointer-events: none;
 }}
 .nilorn-label-pill-{uid} .dot {{
     width: 9px; height: 9px; border-radius: 50%;
     background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
-    animation: nilornDot-{uid} 1s ease-in-out 17;
+    animation: nilornDot-{uid} 1s ease-in-out 2.8;
 }}
 </style>
 <!-- Water-refraction filter: distorts whatever is visible THROUGH the expanding ring (via
