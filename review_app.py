@@ -5600,17 +5600,45 @@ div[data-testid="stRadio"] label > div:first-child { display: none; }
 
     period_col, picker_col, filler_col, dl_col = st.columns([1.3, 1.6, 1.9, 1.3])
     with period_col:
-        # Same remount issue as the status filter below: this radio isn't rendered while on a
-        # "View details" page, so returning from one recreates it from scratch. Its RETURN value
-        # restores fine from session_state, but the pill shown as active can silently revert to the
-        # first option ("Month") on that first remounted render unless we pin `index=` explicitly.
+        # Same pill-button approach as the status filter below (not st.radio) — same rounded-capsule
+        # look, no native radio dot, and no risk of the "checked" desync bug documented there. Also
+        # sidesteps the remount issue: this row isn't rendered while on a "View details" page, so
+        # returning from one used to silently reset the radio's shown selection to "Month" even
+        # though the underlying value was still correct — a plain button has no such visual state to
+        # fall out of sync, since the active pill is decided fresh from session_state every render.
         _period_opts = ["Month", "Quarter", "Year"]
-        _stored_period = st.session_state.get("dashboard_period")
-        _period_default_index = _period_opts.index(_stored_period) if _stored_period in _period_opts else 0
-        period = st.radio(
-            "Time Period", _period_opts, index=_period_default_index,
-            horizontal=True, key="dashboard_period", label_visibility="collapsed",
+        _period = st.session_state.get("dashboard_period")
+        if _period not in _period_opts:
+            _period = "Month"
+
+        st.markdown(
+            f"""<style>
+div[class*="st-key-dashboard_period_row"] {{
+    display: inline-flex; flex-direction: row; gap: 0; width: fit-content;
+    background: #ffffff; border-radius: 24px; padding: 3px; border: 1px solid #e5e3da;
+}}
+div[class*="st-key-dashboard_period_row"] div[data-testid="stButton"] {{ width: auto; }}
+div[class*="st-key-dashboard_period_row"] button {{
+    background: transparent !important; color: #4a4a45 !important; border: none !important;
+    border-radius: 20px !important; padding: 5px 16px !important; font-size: 13px !important;
+    font-weight: 400 !important; box-shadow: none !important; transform: none !important;
+    white-space: nowrap;
+}}
+div[class*="st-key-dashboard_period_row"] button:hover {{ background: rgba(0, 0, 0, 0.05) !important; }}
+div[class*="st-key-dashboard_period_pill_{_period}"] button {{
+    background: #7F77DD !important; color: #ffffff !important; font-weight: 600 !important;
+}}
+</style>""",
+            unsafe_allow_html=True,
         )
+
+        with st.container(key="dashboard_period_row"):
+            for _popt in _period_opts:
+                if st.button(_popt, key=f"dashboard_period_pill_{_popt}"):
+                    st.session_state["dashboard_period"] = _popt
+                    st.rerun()
+
+        period = _period
 
     _today_for_label = _date.today()
 
