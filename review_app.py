@@ -3181,6 +3181,36 @@ html, body, [class*="css"]  {
 }
 .stApp {
     background: linear-gradient(160deg, #f3f0fb 0%, #f7f8fc 55%);
+    position: relative;
+}
+[data-testid="stAppViewContainer"] {
+    position: relative;
+    z-index: 1;
+}
+.stApp::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.9;
+    background:
+        radial-gradient(ellipse 45% 38% at 18% 20%, rgba(139, 118, 230, 0.55), transparent 62%),
+        radial-gradient(ellipse 40% 42% at 84% 26%, rgba(163, 143, 238, 0.48), transparent 64%),
+        radial-gradient(ellipse 50% 46% at 48% 84%, rgba(120, 108, 224, 0.46), transparent 62%),
+        radial-gradient(ellipse 38% 34% at 6% 90%, rgba(180, 166, 244, 0.40), transparent 62%),
+        radial-gradient(ellipse 34% 34% at 96% 88%, rgba(108, 96, 214, 0.40), transparent 62%);
+    background-size: 150% 150%;
+    animation: nilornWaterDrift 28s ease-in-out infinite;
+    filter: blur(3px);
+}
+@keyframes nilornWaterDrift {
+    0%   { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
+    50%  { background-position: 40% 45%, 60% 50%, 35% 60%, 30% 65%, 65% 55%; }
+    100% { background-position: 20% 15%, 80% 20%, 45% 90%, 10% 85%, 90% 85%; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .stApp::before { animation: none !important; }
 }
 [data-testid="stHeader"] {
     background: transparent;
@@ -3652,7 +3682,7 @@ def _water_loader_markup(label, uid):
         rgba(0, 0, 0, 0.95) calc(var(--nilorn-r-{uid}) - 38px),
         rgba(0, 0, 0, 0.95) var(--nilorn-r-{uid}),
         transparent calc(var(--nilorn-r-{uid}) + 62px));
-    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards;
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) infinite;
 }}
 .nilorn-ripple-{uid}.r2 {{
     animation-delay: 0.3s;
@@ -3677,8 +3707,8 @@ def _water_loader_markup(label, uid):
         0 0 22px 4px rgba(255, 255, 255, 0.35),
         inset 0 0 26px rgba(127, 119, 221, 0.28);
     opacity: 0.85;
-    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) forwards,
-               nilornRimFade-{uid} 2.2s ease forwards;
+    animation: nilornRippleGrow-{uid} 2.2s cubic-bezier(0.2, 0.55, 0.35, 1) infinite,
+               nilornRimFade-{uid} 2.2s ease infinite;
 }}
 .nilorn-rim-{uid}.r2 {{
     animation-delay: 0.3s, 0.3s;
@@ -3706,16 +3736,18 @@ def _water_loader_markup(label, uid):
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-    /* Finite (not infinite!) — pulses briefly, then fades out on its own and stays gone, so it
-       can never look "stuck" if the person doesn't interact again right after this fires. */
-    animation: nilornLabelPulse-{uid} 2.8s ease forwards;
+    /* Loops for as long as the placeholder stays on screen (slow network / slow DB call), so the
+       ripple never visibly "freezes" mid-load — it keeps sweeping/pulsing until the real rerun
+       replaces this markup outright. The 0%/100% opacity values are both 0, so each loop restarts
+       seamlessly with no flicker at the seam. */
+    animation: nilornLabelPulse-{uid} 2.8s ease infinite;
     pointer-events: none;
 }}
 .nilorn-label-pill-{uid} .dot {{
     width: 9px; height: 9px; border-radius: 50%;
     background: linear-gradient(145deg, #a99cee 0%, #7F77DD 100%);
     box-shadow: 0 0 8px rgba(127, 119, 221, 0.7);
-    animation: nilornDot-{uid} 1s ease-in-out 2.8;
+    animation: nilornDot-{uid} 1s ease-in-out infinite;
 }}
 </style>
 <!-- Water-refraction filter: distorts whatever is visible THROUGH the expanding ring (via
