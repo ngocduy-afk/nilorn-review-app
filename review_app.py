@@ -5869,28 +5869,95 @@ div[class*="st-key-dashboard_filter_pill_{_current_filter}"] button {{
         if not filtered_card_rows:
             st.caption("No complaints match the current filter.")
 
+        # Recent-complaint card — white card, colored left accent bar, circular status icon (red "!"
+        # for not-closed / green check for closed), pill status badges + a subtle "→" hint top-right,
+        # a soft decorative color wash in the bottom-right corner, and a rounded "View details" pill
+        # button. Distinct from zone_card() (which does a full colored background and is shared by
+        # many other tabs) — this style is specific to the dashboard's recent-complaints grid, so it
+        # gets its own "recent_card_" key prefix instead of reusing zone_card's CSS.
+        st.markdown(
+            """<style>
+div[class*="st-key-recent_card_coral_"] {
+    background: linear-gradient(165deg, #ffffff 55%, #fdf0ea 100%);
+    border: 1px solid #f1ddd3; border-left: 4px solid #d8492c; border-radius: 14px;
+    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1rem; position: relative; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(30, 20, 15, 0.05);
+}
+div[class*="st-key-recent_card_teal_"] {
+    background: linear-gradient(165deg, #ffffff 55%, #eaf8f0 100%);
+    border: 1px solid #d7ecdf; border-left: 4px solid #1f9d55; border-radius: 14px;
+    padding: 1.05rem 1.2rem 1.1rem; margin-bottom: 1rem; position: relative; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(15, 30, 20, 0.05);
+}
+div[class*="st-key-recent_card_coral_"]::after,
+div[class*="st-key-recent_card_teal_"]::after {
+    content: ""; position: absolute; right: 0; bottom: 0; width: 150px; height: 100px;
+    pointer-events: none; background-repeat: no-repeat; background-position: bottom right;
+    background-size: 150px 100px;
+}
+div[class*="st-key-recent_card_coral_"]::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='100' viewBox='0 0 150 100'%3E%3Cpath d='M0 70 C 30 40, 60 90, 95 55 S 150 30, 150 30 V100 H0 Z' fill='%23d8492c' opacity='0.10'/%3E%3Cpath d='M20 85 C 50 60, 80 100, 115 70 S 150 55, 150 55 V100 H20 Z' fill='%23d8492c' opacity='0.14'/%3E%3C/svg%3E");
+}
+div[class*="st-key-recent_card_teal_"]::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='100' viewBox='0 0 150 100'%3E%3Cpath d='M0 70 C 30 40, 60 90, 95 55 S 150 30, 150 30 V100 H0 Z' fill='%231f9d55' opacity='0.10'/%3E%3Cpath d='M20 85 C 50 60, 80 100, 115 70 S 150 55, 150 55 V100 H20 Z' fill='%231f9d55' opacity='0.14'/%3E%3C/svg%3E");
+}
+div[class*="st-key-card_detail_"] button {
+    background: #ffffff !important; color: #2c2c2a !important; border: 1px solid #e5e3da !important;
+    border-radius: 999px !important; padding: 6px 18px !important; font-size: 13px !important;
+    font-weight: 600 !important; box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+}
+div[class*="st-key-card_detail_"] button:hover { background: #f5f4ef !important; }
+div[class*="st-key-recent_card_coral_"] .fc-badge,
+div[class*="st-key-recent_card_teal_"] .fc-badge { padding: 3px 10px; font-size: 10.5px; }
+</style>""",
+            unsafe_allow_html=True,
+        )
+
         card_cols = st.columns(2)
         for i, r in enumerate(filtered_card_rows):
             with card_cols[i % 2]:
                 missing_tags = _compute_missing_tags(r)
+                _sid = r[idx["submission_id"]]
                 zone_color = "coral" if missing_tags else "teal"
-                with zone_card(zone_color):
+                with st.container(key=f"recent_card_{zone_color}_{_sid}"):
                     if missing_tags:
                         badges_html = "".join(status_badge_html(t) for t in missing_tags)
+                        icon_html = (
+                            '<div style="width:28px;height:28px;border-radius:50%;background:#d8492c;'
+                            'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                            '<span style="color:#fff;font-weight:800;font-size:15px;line-height:1;">!</span></div>'
+                        )
                     else:
                         badges_html = status_badge_html("Closed")
+                        icon_html = (
+                            '<div style="width:28px;height:28px;border-radius:50%;background:#1f9d55;'
+                            'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                            '<svg width="14" height="14" viewBox="0 0 24 24" fill="none">'
+                            '<path d="M5 13l4 4L19 7" stroke="white" stroke-width="3" '
+                            'stroke-linecap="round" stroke-linejoin="round"/></svg></div>'
+                        )
                     supplier_display = r[idx["vendor_name_matched"]] or r[idx["supplier_name_raw"]]
                     st.markdown(
-                        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">'
-                        f'<span style="font-weight:600;font-size:14px;">{supplier_display}</span>'
-                        f'<div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;">{badges_html}</div></div>',
+                        f'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">'
+                        f'<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1;">'
+                        f'{icon_html}'
+                        f'<span style="font-weight:700;font-size:14.5px;color:#1a2b3a;white-space:nowrap;'
+                        f'overflow:hidden;text-overflow:ellipsis;">{supplier_display}</span>'
+                        f'</div>'
+                        f'<span style="color:#b7b5ac;font-size:15px;flex-shrink:0;">→</span>'
+                        f'</div>'
+                        f'<div style="display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 2px;">{badges_html}</div>',
                         unsafe_allow_html=True,
                     )
-                    st.caption(f"SO {r[idx['sales_order_no']]} · Item {r[idx['item_no']]}")
-                    st.caption(
-                        f"Record Date {r[idx['record_date']].strftime('%d/%m/%Y') if r[idx['record_date']] else '(unknown)'}"
+                    st.markdown(
+                        f'<div style="margin:10px 0 2px;font-size:12.5px;color:#73726c;">'
+                        f'📋&nbsp; SO {r[idx["sales_order_no"]]} · Item {r[idx["item_no"]]}</div>'
+                        f'<div style="font-size:12.5px;color:#73726c;margin-bottom:10px;">'
+                        f'📅&nbsp; Record Date '
+                        f'{r[idx["record_date"]].strftime("%d/%m/%Y") if r[idx["record_date"]] else "(unknown)"}</div>',
+                        unsafe_allow_html=True,
                     )
-                    if st.button("View details →", key=f"card_detail_{r[idx['submission_id']]}"):
-                        st.session_state.selected_submission_id = str(r[idx["submission_id"]])
+                    if st.button("📋  View details  →", key=f"card_detail_{_sid}"):
+                        st.session_state.selected_submission_id = str(_sid)
                         show_transition_pill()
                         st.rerun()
